@@ -47,6 +47,7 @@ import {
 } from '@/features/canvas/application/customImageProviderConfig';
 import {
   buildCustomProviderRequestDebugPreview,
+  buildCustomVideoProviderRequestDebugPreview,
   classifyGenerationError,
   detectInlineImageAspectRatio,
   getCustomProviderJob,
@@ -1851,5 +1852,310 @@ describe('custom provider diagnostic source redaction', () => {
   it('summarizes remote and local sources without leaking query secrets or paths', () => {
     expect(summarizeMaterializedSourceForLog('https://cdn.example.com/result.png?token=secret')).toBe('[remote-url omitted]');
     expect(summarizeMaterializedSourceForLog('/Users/alice/private/result.png')).toBe('[local-file omitted]');
+  });
+});
+
+function dashscopeWanProvider(overrides: Partial<CustomProviderConfig> = {}): CustomProviderConfig {
+  return provider({
+    id: 'dashscope-1',
+    label: '通义万相 3.0',
+    mediaType: 'video',
+    baseUrl: 'https://test-workspace.cn-beijing.maas.aliyuncs.com',
+    endpointPath: '/api/v1/services/aigc/video-generation/video-synthesis',
+    apiStyle: 'generic-json',
+    models: ['wan3.0-video'],
+    extraHeaders: { 'X-DashScope-Async': 'enable' },
+    extraParams: {
+      providerKind: 'dashscope-wan-video',
+      videoRequestBodyMode: 'json',
+      videoTaskIdPath: 'output.task_id',
+      videoStatusEndpointPath: '/api/v1/tasks/{taskId}',
+      videoStatusMethod: 'GET',
+      videoStatusPath: 'output.task_status',
+      videoPendingValues: ['PENDING', 'RUNNING'],
+      videoSuccessValues: ['SUCCEEDED'],
+      videoFailedValues: ['FAILED', 'CANCELED', 'UNKNOWN'],
+      responseVideoPaths: ['output.video_url'],
+      defaultRequestParams: {
+        resolution: '1080P',
+        ratio: 'adaptive',
+        prompt_extend: true,
+      },
+    },
+    ...overrides,
+  });
+}
+
+describe('DashScope wan3.0 video request body', () => {
+  it('assembles text-to-video body with model/input.prompt/parameters', () => {
+    useCustomProvidersStore.getState().replaceAll([dashscopeWanProvider()]);
+
+    const debug = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '一只猫在弹钢琴',
+      model: 'custom:dashscope-1:wan3.0-video',
+      size: '1080P',
+      aspect_ratio: '16:9',
+    });
+
+    expect(debug.headers['X-DashScope-Async']).toBe('enable');
+    const body = debug.body as Record<string, unknown>;
+    expect(body.model).toBe('wan3.0-video');
+    const input = body.input as Record<string, unknown>;
+    expect(input.prompt).toBe('一只猫在弹钢琴');
+    expect(input.media).toBeUndefined();
+    const parameters = body.parameters as Record<string, unknown>;
+    expect(parameters.resolution).toBe('1080P');
+    expect(parameters.ratio).toBe('16:9');
+    expect(parameters.duration).toBe(5);
+    expect(parameters.prompt_extend).toBe(true);
+  });
+
+  it('maps a single reference image to first_frame', () => {
+    useCustomProvidersStore.getState().replaceAll([dashscopeWanProvider()]);
+
+    const debug = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '延续这张图',
+      model: 'custom:dashscope-1:wan3.0-video',
+      size: '1080P',
+      aspect_ratio: '16:9',
+      reference_images: ['https://cdn.example.com/start.png'],
+    });
+
+    const body = debug.body as Record<string, unknown>;
+    const input = body.input as Record<string, unknown>;
+    const media = input.media as Array<Record<string, unknown>>;
+    expect(media).toHaveLength(1);
+    expect(media[0].type).toBe('first_frame');
+    expect(media[0].url).toBe('https://cdn.example.com/start.png');
+  });
+
+  it('maps two reference images to first_frame and last_frame', () => {
+    useCustomProvidersStore.getState().replaceAll([dashscopeWanProvider()]);
+
+    const debug = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '首尾帧过渡',
+      model: 'custom:dashscope-1:wan3.0-video',
+      size: '1080P',
+      aspect_ratio: '16:9',
+      reference_images: ['https://cdn.example.com/first.png', 'https://cdn.example.com/last.png'],
+    });
+
+    const body = debug.body as Record<string, unknown>;
+    const media = (body.input as Record<string, unknown>).media as Array<Record<string, unknown>>;
+    expect(media).toHaveLength(2);
+    expect(media[0].type).toBe('first_frame');
+    expect(media[0].url).toBe('https://cdn.example.com/first.png');
+    expect(media[1].type).toBe('last_frame');
+    expect(media[1].url).toBe('https://cdn.example.com/last.png');
+  });
+
+  it('maps reference videos and audios alongside images as reference media', () => {
+    useCustomProvidersStore.getState().replaceAll([dashscopeWanProvider()]);
+
+    const debug = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '多模态参考',
+      model: 'custom:dashscope-1:wan3.0-video',
+      size: '1080P',
+      aspect_ratio: 'adaptive',
+      reference_images: ['https://cdn.example.com/ref.png'],
+      reference_videos: ['https://cdn.example.com/ref.mp4'],
+      reference_audios: ['https://cdn.example.com/ref.mp3'],
+    });
+
+    const body = debug.body as Record<string, unknown>;
+    const media = (body.input as Record<string, unknown>).media as Array<Record<string, unknown>>;
+    expect(media).toHaveLength(3);
+    expect(media.map((m) => m.type)).toEqual(['reference_image', 'reference_video', 'reference_audio']);
+  });
+
+  it('clamps duration into the 2-30 range', () => {
+    useCustomProvidersStore.getState().replaceAll([dashscopeWanProvider()]);
+
+    const debug = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '超长时长',
+      model: 'custom:dashscope-1:wan3.0-video',
+      size: '1080P',
+      aspect_ratio: '16:9',
+      extra_params: { seconds: 120 },
+    });
+
+    const parameters = (debug.body as Record<string, unknown>).parameters as Record<string, unknown>;
+    expect(parameters.duration).toBe(30);
+  });
+});
+
+function seedanceVideoProvider(overrides: Partial<CustomProviderConfig> = {}): CustomProviderConfig {
+  return provider({
+    id: 'seedance-1',
+    label: '即梦 / Seedance',
+    mediaType: 'video',
+    baseUrl: 'https://ark.cn-beijing.volces.com',
+    endpointPath: '/api/v3/contents/generations/tasks',
+    apiStyle: 'generic-json',
+    models: ['doubao-seedance-2-5-260628', 'doubao-seedance-2-0-pro-260215'],
+    extraParams: {
+      providerKind: 'seedance-video',
+      requestComposer: 'video-volcengine-seedance-json',
+      videoRequestBodyMode: 'json',
+      videoTaskIdPath: 'id',
+      videoStatusEndpointPath: '/api/v3/contents/generations/tasks/{taskId}',
+      responseVideoPaths: ['content.video_url', 'video_url', 'data.video_url', 'content[0].url'],
+      responseVideoPath: 'content.video_url',
+      videoStatusPath: 'status',
+      videoPendingValues: ['queued', 'running', 'processing', 'pending', 'in_progress'],
+      videoSuccessValues: ['succeeded', 'success', 'completed', 'done'],
+      videoFailedValues: ['failed', 'error', 'canceled', 'expired'],
+      defaultRequestParams: {
+        generate_audio: true,
+        watermark: false,
+      },
+    },
+    ...overrides,
+  });
+}
+
+describe('Volcengine Seedance video request body', () => {
+  it('assembles text-to-video body with model/content.text/duration/ratio/generate_audio', () => {
+    useCustomProvidersStore.getState().replaceAll([seedanceVideoProvider()]);
+
+    const debug = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '小猫对着镜头打哈欠',
+      model: 'custom:seedance-1:doubao-seedance-2-5-260628',
+      size: '720p',
+      aspect_ratio: '16:9',
+      extra_params: { seconds: 5 },
+    });
+
+    const body = debug.body as Record<string, unknown>;
+    expect(body.model).toBe('doubao-seedance-2-5-260628');
+    expect(body.duration).toBe(5);
+    expect(body.ratio).toBe('16:9');
+    expect(body.resolution).toBe('720p');
+    expect(body.generate_audio).toBe(true);
+    expect(body.watermark).toBe(false);
+
+    const content = body.content as Array<Record<string, unknown>>;
+    expect(content).toHaveLength(1);
+    expect(content[0]).toEqual({
+      type: 'text',
+      text: '小猫对着镜头打哈欠',
+    });
+  });
+
+  it('maps a single reference image to first_frame', () => {
+    useCustomProvidersStore.getState().replaceAll([seedanceVideoProvider()]);
+
+    const debug = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '镜头向前推进',
+      model: 'custom:seedance-1:doubao-seedance-2-5-260628',
+      size: '720p',
+      aspect_ratio: '16:9',
+      reference_images: ['https://cdn.example.com/start.png'],
+    });
+
+    const body = debug.body as Record<string, unknown>;
+    const content = body.content as Array<Record<string, unknown>>;
+    expect(content).toHaveLength(2);
+    expect(content[0]).toEqual({
+      type: 'image_url',
+      image_url: { url: 'https://cdn.example.com/start.png' },
+      role: 'first_frame',
+    });
+    expect(content[1]).toEqual({
+      type: 'text',
+      text: '镜头向前推进',
+    });
+  });
+
+  it('maps two reference images to first_frame and last_frame', () => {
+    useCustomProvidersStore.getState().replaceAll([seedanceVideoProvider()]);
+
+    const debug = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '日出到日落过渡',
+      model: 'custom:seedance-1:doubao-seedance-2-5-260628',
+      size: '1080p',
+      aspect_ratio: '16:9',
+      reference_images: [
+        'https://cdn.example.com/sunrise.png',
+        'https://cdn.example.com/sunset.png',
+      ],
+    });
+
+    const body = debug.body as Record<string, unknown>;
+    const content = body.content as Array<Record<string, unknown>>;
+    expect(content).toHaveLength(3);
+    expect(content[0]).toEqual({
+      type: 'image_url',
+      image_url: { url: 'https://cdn.example.com/sunrise.png' },
+      role: 'first_frame',
+    });
+    expect(content[1]).toEqual({
+      type: 'image_url',
+      image_url: { url: 'https://cdn.example.com/sunset.png' },
+      role: 'last_frame',
+    });
+    expect(content[2]).toEqual({
+      type: 'text',
+      text: '日出到日落过渡',
+    });
+  });
+
+  it('maps multimodal images, videos, and audios to reference roles', () => {
+    useCustomProvidersStore.getState().replaceAll([seedanceVideoProvider()]);
+
+    const debug = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '根据参考素材生成全新画面',
+      model: 'custom:seedance-1:doubao-seedance-2-5-260628',
+      size: '720p',
+      aspect_ratio: 'auto',
+      reference_images: ['https://cdn.example.com/char.png'],
+      reference_videos: ['https://cdn.example.com/action.mp4'],
+      reference_audios: ['https://cdn.example.com/bgm.mp3'],
+      extra_params: {
+        omni_reference_task_type: 'reference',
+      },
+    });
+
+    const body = debug.body as Record<string, unknown>;
+    expect(body.ratio).toBe('adaptive');
+    expect(body.omni_reference_task_type).toBe('reference');
+
+    const content = body.content as Array<Record<string, unknown>>;
+    expect(content).toHaveLength(4);
+    expect(content[0]).toEqual({
+      type: 'image_url',
+      image_url: { url: 'https://cdn.example.com/char.png' },
+      role: 'reference_image',
+    });
+    expect(content[1]).toEqual({
+      type: 'video_url',
+      video_url: { url: 'https://cdn.example.com/action.mp4' },
+      role: 'reference_video',
+    });
+    expect(content[2]).toEqual({
+      type: 'audio_url',
+      audio_url: { url: 'https://cdn.example.com/bgm.mp3' },
+      role: 'reference_audio',
+    });
+    expect(content[3]).toEqual({
+      type: 'text',
+      text: '根据参考素材生成全新画面',
+    });
+  });
+
+  it('handles smart duration -1 and normalizes 2K resolution', () => {
+    useCustomProvidersStore.getState().replaceAll([seedanceVideoProvider()]);
+
+    const debug = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '智能时长测试',
+      model: 'custom:seedance-1:doubao-seedance-2-5-260628',
+      size: '2K',
+      aspect_ratio: '16:9',
+      extra_params: { duration: -1 },
+    });
+
+    const body = debug.body as Record<string, unknown>;
+    expect(body.duration).toBe(-1);
+    expect(body.resolution).toBe('1080p');
   });
 });

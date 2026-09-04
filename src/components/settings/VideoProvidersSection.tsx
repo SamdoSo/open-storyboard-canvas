@@ -328,34 +328,76 @@ const VIDEO_PROVIDER_TEMPLATES: VideoProviderTemplate[] = [
     modelListEndpointPath: '',
     apiStyle: 'generic-json',
     models: [
+      { id: 'doubao-seedance-2-5-260628', description: 'Seedance 2.5（推荐，支持全模态 30s 直出）' },
       { id: 'doubao-seedance-2-0-pro-260215', description: 'Seedance 2.0 Pro（示例，请以火山方舟控制台为准）' },
       { id: 'doubao-seedance-2-0-fast-260215', description: 'Seedance 2.0 Fast（示例，请以火山方舟控制台为准）' },
       { id: 'doubao-seedance-1-5-pro-251215', description: 'Seedance 1.5 Pro（示例，请以火山方舟控制台为准）' },
     ],
-    durations: ['4', '5', '8', '10', '12', '15'],
-    aspectRatios: ['16:9', '9:16', '1:1'],
-    resolutions: ['480p', '720p', '1080p', '2K'],
+    durations: ['-1', '4', '5', '8', '10', '12', '15', '20', '25', '30'],
+    aspectRatios: ['adaptive', '16:9', '9:16', '4:3', '3:4', '1:1', '21:9'],
+    resolutions: ['480p', '720p', '1080p', '4k'],
     extraParams: {
       providerKind: 'seedance-video',
       requestComposer: 'video-volcengine-seedance-json',
       videoRequestBodyMode: 'json',
       videoTaskIdPath: 'id',
       videoStatusEndpointPath: '/api/v3/contents/generations/tasks/{taskId}',
-      responseVideoPath: 'content[0].url',
+      responseVideoPaths: ['content.video_url', 'video_url', 'data.video_url', 'content[0].url'],
+      responseVideoPath: 'content.video_url',
       videoStatusPath: 'status',
       videoReferenceField: 'reference_images',
       videoPendingValues: ['queued', 'running', 'processing', 'pending', 'in_progress'],
       videoSuccessValues: ['succeeded', 'success', 'completed', 'done'],
-      videoFailedValues: ['failed', 'error', 'canceled'],
+      videoFailedValues: ['failed', 'error', 'canceled', 'expired'],
       videoPollIntervalMs: 5000,
       videoPollTimeoutMs: 15 * 60 * 1000,
       defaultRequestParams: {
-        generate_audio: false,
+        generate_audio: true,
         watermark: false,
       },
       videoInputSchema: defaultVideoInputSchemaForProviderKind('seedance-video'),
     },
-    note: 'Seedance / 火山方舟任务式视频模板：POST /api/v3/contents/generations/tasks 创建任务，GET /api/v3/contents/generations/tasks/{taskId} 查询结果。模型 ID、duration、ratio、resolution、generate_audio 等字段请按火山方舟控制台/文档调整；若你的账号走 AK/SK 签名或代理，请改为服务端代理后再保存。',
+    note: 'Seedance / 火山方舟任务式视频模板：POST /api/v3/contents/generations/tasks 创建任务，GET /api/v3/contents/generations/tasks/{taskId} 查询结果。支持文生、首帧、首尾帧及全模态参考生视频（图片/视频/音频）。模型 ID、duration、ratio、resolution、generate_audio 等字段请按火山方舟控制台/文档调整；若你的账号走 AK/SK 签名或代理，请改为服务端代理后再保存。',
+  },
+  {
+    key: 'dashscope-wan30',
+    label: '通义万相 3.0',
+    hint: 'DashScope / 通义万相 3.0 异步视频生成',
+    labelValue: '通义万相 3.0 / DashScope',
+    baseUrl: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com',
+    endpointPath: '/api/v1/services/aigc/video-generation/video-synthesis',
+    modelListEndpointPath: '',
+    apiStyle: 'generic-json',
+    models: [
+      { id: 'wan3.0-video', description: '万相 3.0 标准版' },
+      { id: 'wan3.0-video-prime', description: '万相 3.0 高速版' },
+    ],
+    durations: ['5', '10', '15', '20', '25', '30'],
+    aspectRatios: ['adaptive', '16:9', '4:3', '1:1', '3:4', '9:16'],
+    resolutions: ['1080P', '720P', '480P'],
+    extraParams: {
+      providerKind: 'dashscope-wan-video',
+      requestComposer: 'video-dashscope-wan-json',
+      videoRequestBodyMode: 'json',
+      videoTaskIdPath: 'output.task_id',
+      videoStatusEndpointPath: '/api/v1/tasks/{taskId}',
+      videoStatusMethod: 'GET',
+      videoStatusPath: 'output.task_status',
+      videoPendingValues: ['PENDING', 'RUNNING'],
+      videoSuccessValues: ['SUCCEEDED'],
+      videoFailedValues: ['FAILED', 'CANCELED', 'UNKNOWN'],
+      responseVideoPaths: ['output.video_url'],
+      videoPollIntervalMs: 10000,
+      videoPollTimeoutMs: 1200000,
+      extraHeaders: { 'X-DashScope-Async': 'enable' },
+      defaultRequestParams: {
+        resolution: '1080P',
+        ratio: 'adaptive',
+        prompt_extend: true,
+      },
+      videoInputSchema: defaultVideoInputSchemaForProviderKind('dashscope-wan-video'),
+    },
+    note: '通义万相 3.0 / DashScope 异步视频生成。Base URL 需把 {WorkspaceId} 替换为实际业务空间 ID；提交时必须携带 X-DashScope-Async: enable，任务完成结果在 output.video_url。',
   },
 ];
 
@@ -440,6 +482,18 @@ function asPlainRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function extraHeadersFromExtra(extraParams: Record<string, unknown>): Record<string, string> {
+  const raw = asPlainRecord(extraParams.extraHeaders);
+  const headers: Record<string, string> = {};
+  Object.entries(raw).forEach(([key, value]) => {
+    const normalizedKey = key.trim();
+    if (normalizedKey && typeof value === 'string') {
+      headers[normalizedKey] = value;
+    }
+  });
+  return headers;
 }
 
 function requestBodyHintsFromExtra(extraParams: Record<string, unknown>): VideoRequestBodyHintDraft {
@@ -820,7 +874,7 @@ export const VideoProvidersSection = memo(function VideoProvidersSection() {
       apiStyle,
       models: cleanModels.map((model) => model.id),
       supportsWebSearch: false,
-      extraHeaders: {},
+      extraHeaders: extraHeadersFromExtra(templateExtraParams),
       queryParams: {},
       responseFormat: 'generic',
       supportedResolutions: resolutions,

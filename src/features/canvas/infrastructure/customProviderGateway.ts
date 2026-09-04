@@ -4206,40 +4206,212 @@ function buildVolcengineSeedanceVideoJsonBody(
 ): Record<string, unknown> {
   const defaultRequestParams = resolveDefaultRequestParams(cfg);
   const userExtra = { ...(request.extra_params ?? {}) } as Record<string, unknown>;
-  const seconds = resolveVideoSeconds(request, defaultRequestParams);
-  const aspectRatio = userExtra.aspectRatio ?? userExtra.aspect_ratio ?? request.aspect_ratio;
-  const resolution = userExtra.resolutionType ?? userExtra.size ?? request.size;
-  const referenceImages = request.reference_images ?? [];
+
+  // 时长处理：支持 -1（智能时长），正整数秒在 [2, 30] 范围内
+  const rawSeconds =
+    userExtra.seconds
+    ?? userExtra.duration
+    ?? defaultRequestParams.seconds
+    ?? defaultRequestParams.duration;
+  let duration: number | undefined;
+  if (rawSeconds === -1 || rawSeconds === '-1') {
+    duration = -1;
+  } else {
+    const parsed = resolveVideoSeconds(request, defaultRequestParams);
+    if (parsed !== undefined) {
+      duration = Math.max(2, Math.min(30, Math.round(parsed)));
+    }
+  }
+
+  // 宽高比：auto 规范化为 adaptive，保留显式比例（如 16:9）
+  const rawRatio = userExtra.aspectRatio ?? userExtra.aspect_ratio ?? request.aspect_ratio;
+  let ratio: string | undefined;
+  if (typeof rawRatio === 'string' && rawRatio.trim()) {
+    const trimmed = rawRatio.trim();
+    ratio = trimmed === 'auto' ? 'adaptive' : trimmed;
+  }
+
+  // 分辨率：过滤无效的 2K，支持 480p, 720p, 1080p, 4k
+  const rawResolution = [
+    userExtra.resolutionType,
+    userExtra.resolution,
+    userExtra.size,
+    request.size,
+    defaultRequestParams.resolution,
+  ].find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim();
+  let resolution: string | undefined = rawResolution;
+  if (resolution && resolution.toLowerCase() === '2k') {
+    resolution = '1080p';
+  }
+
+  const images = request.reference_images ?? [];
+  const videos = request.reference_videos ?? [];
+  const audios = request.reference_audios ?? [];
+
+  const content: Array<Record<string, unknown>> = [];
+
+  // 火山方舟 content 角色划分：
+  // 1. 全模态参考生视频：有视频、音频或显式指定了 omni_reference_task_type / reference 模式或多于 2 张图片
+  // 2. 首尾帧：恰好 2 张图片且未声明参考模式
+  // 3. 首帧：恰好 1 张图片且未声明参考模式
+  const isMultimodalOrExplicitRef =
+    videos.length > 0 ||
+    audios.length > 0 ||
+    userExtra.omni_reference_task_type === 'reference' ||
+    userExtra.omni_reference_task_type === 'edit' ||
+    userExtra.omni_reference_task_type === 'extend' ||
+    userExtra.mode === 'reference' ||
+    userExtra.referenceMode === 'reference' ||
+    images.length > 2;
+
+  if (isMultimodalOrExplicitRef) {
+    images.forEach((url) => {
+      content.push({
+        type: 'image_url',
+        image_url: { url },
+        role: 'reference_image',
+      });
+    });
+    videos.forEach((url) => {
+      content.push({
+        type: 'video_url',
+        video_url: { url },
+        role: 'reference_video',
+      });
+    });
+    audios.forEach((url) => {
+      content.push({
+        type: 'audio_url',
+        audio_url: { url },
+        role: 'reference_audio',
+      });
+    });
+  } else if (images.length === 1) {
+    content.push({
+      type: 'image_url',
+      image_url: { url: images[0] },
+      role: 'first_frame',
+    });
+  } else if (images.length === 2) {
+    content.push({
+      type: 'image_url',
+      image_url: { url: images[0] },
+      role: 'first_frame',
+    });
+    content.push({
+      type: 'image_url',
+      image_url: { url: images[1] },
+      role: 'last_frame',
+    });
+  }
+
+  if (content.length === 0 || (request.prompt && request.prompt.trim())) {
+    content.push({
+      type: 'text',
+      text: request.prompt || '',
+    });
+  }
+
   delete userExtra.seconds;
   delete userExtra.duration;
   delete userExtra.size;
   delete userExtra.resolutionType;
+  delete userExtra.resolution;
   delete userExtra.aspect_ratio;
   delete userExtra.aspectRatio;
+  delete userExtra.ratio;
   delete userExtra.reference_images;
+  delete userExtra.reference_videos;
+  delete userExtra.reference_audios;
   delete userExtra.input_reference;
   delete userExtra.inputReference;
   delete userExtra.videoInputSchema;
-
-  const content = [
-    ...referenceImages.map((url) => ({
-      type: 'image_url',
-      image_url: { url },
-    })),
-    {
-      type: 'text',
-      text: request.prompt,
-    },
-  ];
+  delete userExtra.mode;
+  delete userExtra.referenceMode;
 
   return compactRecord({
     model: modelName,
     content,
-    duration: seconds,
-    ratio: aspectRatio && aspectRatio !== 'auto' ? aspectRatio : undefined,
+    duration,
+    ratio,
     resolution,
     ...defaultRequestParams,
     ...userExtra,
+  });
+}
+
+function buildDashScopeWanVideoJsonBody(
+  cfg: CustomProviderConfig,
+  modelName: string,
+  request: GenerateRequest,
+): Record<string, unknown> {
+  const defaultRequestParams = resolveDefaultRequestParams(cfg);
+  const userExtra = { ...(request.extra_params ?? {}) } as Record<string, unknown>;
+  const seconds = resolveVideoSeconds(request, defaultRequestParams) ?? 5;
+  const duration = Math.max(2, Math.min(30, Math.round(seconds)));
+  const rawRatio = userExtra.aspectRatio ?? userExtra.aspect_ratio ?? request.aspect_ratio;
+  const ratio = typeof rawRatio === 'string' && rawRatio.trim() && rawRatio.trim() !== 'auto'
+    ? rawRatio.trim()
+    : 'adaptive';
+  const resolution = [
+    userExtra.resolutionType,
+    userExtra.resolution,
+    userExtra.size,
+    request.size,
+    defaultRequestParams.resolution,
+  ].find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim() ?? '1080P';
+
+  const images = request.reference_images ?? [];
+  const videos = request.reference_videos ?? [];
+  const audios = request.reference_audios ?? [];
+
+  // 万相 3.0 的 first_frame/last_frame 与 reference_xx 互斥，这里按输入媒体自动选择模式：
+  // 有视频/音频时全部作为参考素材；仅图片时按 1 张首帧、2 张首尾帧、更多张参考图处理。
+  const media: Array<Record<string, unknown>> = [];
+  if (videos.length > 0 || audios.length > 0) {
+    images.forEach((url) => media.push({ type: 'reference_image', url }));
+    videos.forEach((url) => media.push({ type: 'reference_video', url }));
+    audios.forEach((url) => media.push({ type: 'reference_audio', url }));
+  } else if (images.length === 1) {
+    media.push({ type: 'first_frame', url: images[0] });
+  } else if (images.length === 2) {
+    media.push({ type: 'first_frame', url: images[0] });
+    media.push({ type: 'last_frame', url: images[1] });
+  } else {
+    images.forEach((url) => media.push({ type: 'reference_image', url }));
+  }
+
+  // 移除已由本函数显式处理的字段，避免与组装结果重复或冲突。
+  delete userExtra.seconds;
+  delete userExtra.duration;
+  delete userExtra.size;
+  delete userExtra.resolutionType;
+  delete userExtra.resolution;
+  delete userExtra.aspect_ratio;
+  delete userExtra.aspectRatio;
+  delete userExtra.ratio;
+  delete userExtra.reference_images;
+  delete userExtra.reference_videos;
+  delete userExtra.reference_audios;
+  delete userExtra.input_reference;
+  delete userExtra.inputReference;
+  delete userExtra.videoInputSchema;
+
+  const parameters = compactRecord({
+    ...defaultRequestParams,
+    resolution,
+    ratio,
+    duration,
+    ...userExtra,
+  });
+
+  return compactRecord({
+    model: modelName,
+    input: compactRecord({
+      prompt: request.prompt || undefined,
+      ...(media.length > 0 ? { media } : {}),
+    }),
+    ...(Object.keys(parameters).length > 0 ? { parameters } : {}),
   });
 }
 
@@ -4293,6 +4465,9 @@ function buildVideoJsonBody(
   }
   if (providerKind === 'seedance-video') {
     return buildVolcengineSeedanceVideoJsonBody(cfg, modelName, request);
+  }
+  if (providerKind === 'dashscope-wan-video') {
+    return buildDashScopeWanVideoJsonBody(cfg, modelName, request);
   }
 
   const body = buildVideoRequestFields(cfg, modelName, request);

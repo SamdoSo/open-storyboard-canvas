@@ -178,21 +178,21 @@ export function defaultVideoInputSchemaForProviderKind(providerKind: unknown): V
       images: {
         enabled: true,
         min: 0,
-        max: 9,
+        max: 30,
         roles: ['reference', 'firstFrame', 'lastFrame', 'keyframe'],
         requireImageHost: true,
       },
       video: {
-        enabled: false,
+        enabled: true,
         min: 0,
-        max: 0,
-        field: '',
+        max: 10,
+        field: 'reference_videos',
       },
       audio: {
-        enabled: false,
+        enabled: true,
         min: 0,
-        max: 0,
-        field: '',
+        max: 10,
+        field: 'reference_audios',
       },
     });
   }
@@ -284,6 +284,29 @@ export function defaultVideoInputSchemaForProviderKind(providerKind: unknown): V
         max: 3,
         roles: ['reference', 'firstFrame', 'lastFrame'],
         requireImageHost: true,
+      },
+    });
+  }
+  if (kind === 'dashscope-wan-video') {
+    return normalizeVideoInputSchema({
+      images: {
+        enabled: true,
+        min: 0,
+        max: 10,
+        roles: ['reference', 'firstFrame', 'lastFrame'],
+        requireImageHost: true,
+      },
+      video: {
+        enabled: true,
+        min: 0,
+        max: 5,
+        field: 'reference_videos',
+      },
+      audio: {
+        enabled: true,
+        min: 0,
+        max: 5,
+        field: 'reference_audios',
       },
     });
   }
