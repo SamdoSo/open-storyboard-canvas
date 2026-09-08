@@ -1984,10 +1984,16 @@
       "providerDesc": "选择当前启用时要使用的图床。",
       "providers": {
         "pixhost": "PiXhost",
-        "seedvault": "私域图床"
+        "seedvault": "私域图床",
+        "superbed": "聚合图床 (SuperBed)",
+        "cloudflareR2": "Cloudflare R2 (S3 兼容)"
       },
       "apiBaseUrl": "API 根地址 / 域名",
       "restoreDefaults": "恢复默认",
+      "testUpload": "测试上传",
+      "testing": "正在测试...",
+      "testSuccess": "测试上传成功！已获取在线图片 URL",
+      "testFailed": "测试上传失败",
       "pixhost": {
         "title": "PiXhost",
         "desc": "PiXhost 域名变动时可在这里改 API 根地址。",
@@ -2010,8 +2016,37 @@
         "tokenHint": "重新填写账号或密码后，保存时会刷新 token。",
         "tokenWillRefresh": "账号或密码已修改，保存时将重新生成 token。"
       },
+      "superbed": {
+        "title": "聚合图床 (SuperBed)",
+        "desc": "国内直连多线路分发图床。免备案，注册后在用户中心查看 API Token 即可使用。",
+        "token": "API Token",
+        "tokenPlaceholder": "在聚合图床用户中心获取的 Token",
+        "categories": "相册分类（可选）",
+        "categoriesPlaceholder": "默认不填，或填写相册分类名称",
+        "getTokenLink": "前往聚合图床获取 Token",
+        "tokenHint": "登录 superbed.cn -> 用户中心 -> 查看 Token。新用户可先领取试用会员。"
+      },
+      "cloudflareR2": {
+        "title": "Cloudflare R2 (S3 兼容)",
+        "desc": "Cloudflare R2 高性能对象存储，零出口流量费用，支持绑定自定义或公开域名。",
+        "accountId": "Account ID",
+        "accountIdPlaceholder": "Cloudflare 账户 ID (32位十六进制字符串)",
+        "accessKeyId": "Access Key ID",
+        "accessKeyIdPlaceholder": "R2 S3 API 访问密钥 ID",
+        "secretAccessKey": "Secret Access Key",
+        "secretAccessKeyPlaceholder": "R2 S3 API 机密访问密钥",
+        "bucketName": "存储桶名称 (Bucket Name)",
+        "bucketNamePlaceholder": "例如: my-storyboard-bucket",
+        "publicDomain": "公共访问域名 / CDN Base URL",
+        "publicDomainPlaceholder": "例如: https://img.yourdomain.com 或 https://pub-xxx.r2.dev",
+        "prefix": "路径前缀（可选）",
+        "prefixPlaceholder": "例如: storyboard (默认: storyboard)",
+        "dashboardHint": "在 Cloudflare 控制台 -> R2 -> '管理 R2 API 令牌' 中创建具备读写权限的凭证；在存储桶设置中可开启公开访问或绑定自定义域名。"
+      },
       "errors": {
         "missingSeedvaultCredentials": "请先填写私域图床账号邮箱和密码。",
+        "missingSuperbedToken": "请先填写聚合图床 API Token。",
+        "missingCloudflareR2Credentials": "请完整填写 Cloudflare R2 的 Account ID、Access Key、Secret Key 与存储桶名称。",
         "tokenRequestFailed": "私域图床 token 获取失败，请检查账号、密码和 API 根地址。",
         "invalidTokenResponse": "私域图床返回的数据中没有可用 token。",
         "saveFailed": "保存图床配置失败。"

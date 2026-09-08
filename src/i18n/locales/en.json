@@ -1988,10 +1988,16 @@
       "providerDesc": "Choose the host to use when image hosting is enabled.",
       "providers": {
         "pixhost": "PiXhost",
-        "seedvault": "Private host"
+        "seedvault": "Private host",
+        "superbed": "SuperBed (聚合图床)",
+        "cloudflareR2": "Cloudflare R2 (S3 Compatible)"
       },
       "apiBaseUrl": "API base URL / domain",
       "restoreDefaults": "Reset",
+      "testUpload": "Test Upload",
+      "testing": "Testing...",
+      "testSuccess": "Test upload successful! Image URL obtained",
+      "testFailed": "Test upload failed",
       "pixhost": {
         "title": "PiXhost",
         "desc": "Change the API base URL here when PiXhost rotates domains.",
@@ -2014,8 +2020,37 @@
         "tokenHint": "After account or password is re-entered, saving refreshes the token.",
         "tokenWillRefresh": "Account or password changed. Saving will generate a new token."
       },
+      "superbed": {
+        "title": "SuperBed (聚合图床)",
+        "desc": "Mainland China fast multi-node image hosting. No ICP filing needed. Get your API Token in User Center.",
+        "token": "API Token",
+        "tokenPlaceholder": "API Token obtained from SuperBed User Center",
+        "categories": "Category / Album (optional)",
+        "categoriesPlaceholder": "Leave blank or enter album category name",
+        "getTokenLink": "Go to SuperBed to get Token",
+        "tokenHint": "Sign in to superbed.cn -> User Center -> View Token."
+      },
+      "cloudflareR2": {
+        "title": "Cloudflare R2 (S3 Compatible)",
+        "desc": "High-performance object storage with zero egress fees. Supports custom domains and public r2.dev buckets.",
+        "accountId": "Account ID",
+        "accountIdPlaceholder": "Cloudflare Account ID (32-character hex)",
+        "accessKeyId": "Access Key ID",
+        "accessKeyIdPlaceholder": "R2 S3 API Access Key ID",
+        "secretAccessKey": "Secret Access Key",
+        "secretAccessKeyPlaceholder": "R2 S3 API Secret Access Key",
+        "bucketName": "Bucket Name",
+        "bucketNamePlaceholder": "e.g. my-storyboard-bucket",
+        "publicDomain": "Public Domain / CDN Base URL",
+        "publicDomainPlaceholder": "e.g. https://img.yourdomain.com or https://pub-xxx.r2.dev",
+        "prefix": "Folder Prefix (optional)",
+        "prefixPlaceholder": "e.g. storyboard (default: storyboard)",
+        "dashboardHint": "Create an R2 API token with Object Read & Write permissions in Cloudflare Dashboard -> R2. Enable Public Access or Custom Domain on your bucket for public image viewing."
+      },
       "errors": {
         "missingSeedvaultCredentials": "Enter the private host account email and password first.",
+        "missingSuperbedToken": "Please enter your SuperBed API Token.",
+        "missingCloudflareR2Credentials": "Please provide Account ID, Access Key ID, Secret Access Key, and Bucket Name for Cloudflare R2.",
         "tokenRequestFailed": "Failed to fetch private host token. Check the account, password, and API base URL.",
         "invalidTokenResponse": "The private host response did not contain a usable token.",
         "saveFailed": "Failed to save image hosting settings."

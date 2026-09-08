@@ -323,10 +323,11 @@ export async function listModels(): Promise<string[]> {
 
 export interface CustomHttpRequest {
   url: string;
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   headers?: Record<string, string>;
-  bodyMode?: 'json' | 'multipart' | 'form-urlencoded';
+  bodyMode?: 'json' | 'multipart' | 'form-urlencoded' | 'raw';
   body?: unknown;
+  rawBody?: string;
   multipart?: CustomHttpMultipartBody;
   timeoutMs?: number;
   networkRoute?: GenerationNetworkRoute;

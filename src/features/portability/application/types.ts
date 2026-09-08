@@ -102,6 +102,8 @@ export interface SettingsBundlePayload {
       email?: string;
       password?: string;
       token?: string;
+      superbedToken?: string;
+      r2SecretAccessKey?: string;
     };
   };
 }

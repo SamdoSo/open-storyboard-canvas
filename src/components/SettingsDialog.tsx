@@ -52,11 +52,15 @@ interface SettingsCheckboxCardProps {
   onCheckedChange: (checked: boolean) => void;
 }
 
+import { testImageHostUpload } from '@/features/canvas/application/imageHosting';
+
 type ImageHostSettingsPatch =
-  Partial<Omit<ImageHostSettings, 'pixhost' | 'seedvault'>>
+  Partial<Omit<ImageHostSettings, 'pixhost' | 'seedvault' | 'superbed' | 'cloudflareR2'>>
   & {
     pixhost?: Partial<ImageHostSettings['pixhost']>;
     seedvault?: Partial<ImageHostSettings['seedvault']>;
+    superbed?: Partial<ImageHostSettings['superbed']>;
+    cloudflareR2?: Partial<ImageHostSettings['cloudflareR2']>;
   };
 
 const _UNUSED_PROVIDER_URLS_KEPT_FOR_FUTURE_USE: Record<string, string> = {
@@ -88,7 +92,7 @@ const CANVAS_MOUSE_ACTIONS: CanvasMouseAction[] = [
   'selectionBox',
   'nodeMenu',
 ];
-const IMAGE_HOST_PROVIDERS: ImageHostProvider[] = ['pixhost', 'seedvault'];
+const IMAGE_HOST_PROVIDERS: ImageHostProvider[] = ['pixhost', 'seedvault', 'superbed', 'cloudflareR2'];
 
 function normalizeSettingsCategory(category: SettingsCategory): SettingsCategory {
   if (category === 'providers' || category === 'providersNew' || category === 'providersOld' || category === 'providersChat') {
@@ -116,6 +120,8 @@ function cloneImageHostSettings(settings: ImageHostSettings): ImageHostSettings 
     provider: settings.provider,
     pixhost: { ...settings.pixhost },
     seedvault: { ...settings.seedvault },
+    superbed: { ...settings.superbed },
+    cloudflareR2: { ...settings.cloudflareR2 },
   };
 }
 
@@ -365,6 +371,8 @@ export function SettingsDialog({
     () => cloneImageHostSettings(imageHostSettings ?? DEFAULT_IMAGE_HOST_SETTINGS)
   );
   const [forceSeedvaultTokenRefresh, setForceSeedvaultTokenRefresh] = useState(false);
+  const [testingImageHost, setTestingImageHost] = useState<ImageHostProvider | null>(null);
+  const [testResult, setTestResult] = useState<{ provider: ImageHostProvider; ok: boolean; message: string } | null>(null);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsSaveError, setSettingsSaveError] = useState<string>('');
   const [checkUpdateStatus, setCheckUpdateStatus] = useState<'' | 'checking' | 'has-update' | 'up-to-date' | 'failed'>('');
@@ -503,6 +511,24 @@ export function SettingsDialog({
         && !nextImageHostSettings.seedvault.token.trim()
       ) {
         throw new Error('settings.imageHosting.errors.missingSeedvaultCredentials');
+      }
+      if (
+        nextImageHostSettings.enabled
+        && nextImageHostSettings.provider === 'superbed'
+        && !nextImageHostSettings.superbed.token.trim()
+      ) {
+        throw new Error('settings.imageHosting.errors.missingSuperbedToken');
+      }
+      if (
+        nextImageHostSettings.enabled
+        && nextImageHostSettings.provider === 'cloudflareR2'
+      ) {
+        if (!nextImageHostSettings.cloudflareR2.accountId.trim()
+          || !nextImageHostSettings.cloudflareR2.accessKeyId.trim()
+          || !nextImageHostSettings.cloudflareR2.secretAccessKey.trim()
+          || !nextImageHostSettings.cloudflareR2.bucketName.trim()) {
+          throw new Error('settings.imageHosting.errors.missingCloudflareR2Credentials');
+        }
       }
       if (localGenerationNetworkRoute === 'custom-proxy') {
         try {
@@ -699,9 +725,50 @@ export function SettingsDialog({
         ...previous.seedvault,
         ...(patch.seedvault ?? {}),
       },
+      superbed: {
+        ...previous.superbed,
+        ...(patch.superbed ?? {}),
+      },
+      cloudflareR2: {
+        ...previous.cloudflareR2,
+        ...(patch.cloudflareR2 ?? {}),
+      },
     }));
     setSettingsSaveError('');
+    setTestResult(null);
   }, []);
+
+  const handleTestImageHost = useCallback(
+    async (provider: ImageHostProvider) => {
+      setTestingImageHost(provider);
+      setTestResult(null);
+      try {
+        const result = await testImageHostUpload(provider, localImageHostSettings);
+        if (result.ok) {
+          setTestResult({
+            provider,
+            ok: true,
+            message: `${t('settings.imageHosting.testSuccess')}: ${result.url ?? ''}`,
+          });
+        } else {
+          setTestResult({
+            provider,
+            ok: false,
+            message: result.error || t('settings.imageHosting.testFailed'),
+          });
+        }
+      } catch (err) {
+        setTestResult({
+          provider,
+          ok: false,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        setTestingImageHost(null);
+      }
+    },
+    [localImageHostSettings, t]
+  );
 
   const updateSeedvaultCredentials = useCallback(
     (patch: Partial<ImageHostSettings['seedvault']>) => {
@@ -1106,181 +1173,485 @@ export function SettingsDialog({
                     </UiSelect>
                   </div>
 
-                  <div className="rounded-lg border border-border-dark bg-bg-dark p-4">
-                    <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-sm font-medium text-text-dark">
-                          {t('settings.imageHosting.pixhost.title')}
-                        </h3>
-                        <p className="mt-1 text-xs text-text-muted">
-                          {t('settings.imageHosting.pixhost.desc')}
-                        </p>
+                  {localImageHostSettings.provider === 'pixhost' && (
+                    <div className="rounded-lg border border-border-dark bg-bg-dark p-4">
+                      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-medium text-text-dark">
+                            {t('settings.imageHosting.pixhost.title')}
+                          </h3>
+                          <p className="mt-1 text-xs text-text-muted">
+                            {t('settings.imageHosting.pixhost.desc')}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark disabled:opacity-50"
+                            disabled={testingImageHost !== null}
+                            onClick={() => void handleTestImageHost('pixhost')}
+                          >
+                            {testingImageHost === 'pixhost' ? (
+                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            ) : null}
+                            {testingImageHost === 'pixhost'
+                              ? t('settings.imageHosting.testing')
+                              : t('settings.imageHosting.testUpload')}
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark"
+                            onClick={() =>
+                              updateLocalImageHostSettings({
+                                pixhost: { ...DEFAULT_IMAGE_HOST_SETTINGS.pixhost },
+                              })
+                            }
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            {t('settings.imageHosting.restoreDefaults')}
+                          </button>
+                        </div>
                       </div>
-                      <button
-                        type="button"
-                        className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark"
-                        onClick={() =>
-                          updateLocalImageHostSettings({
-                            pixhost: { ...DEFAULT_IMAGE_HOST_SETTINGS.pixhost },
-                          })
-                        }
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        {t('settings.imageHosting.restoreDefaults')}
-                      </button>
-                    </div>
 
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="text-xs font-medium text-text-muted sm:col-span-2">
-                        {t('settings.imageHosting.apiBaseUrl')}
-                        <input
-                          value={localImageHostSettings.pixhost.apiBaseUrl}
-                          onChange={(event) =>
-                            updateLocalImageHostSettings({
-                              pixhost: { apiBaseUrl: event.target.value },
-                            })
-                          }
-                          placeholder="https://api.pixhost.to"
-                          className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
-                        />
-                      </label>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="text-xs font-medium text-text-muted sm:col-span-2">
+                          {t('settings.imageHosting.apiBaseUrl')}
+                          <input
+                            value={localImageHostSettings.pixhost.apiBaseUrl}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                pixhost: { apiBaseUrl: event.target.value },
+                              })
+                            }
+                            placeholder="https://api.pixhost.to"
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                          />
+                        </label>
 
-                      <label className="text-xs font-medium text-text-muted">
-                        {t('settings.imageHosting.pixhost.contentType')}
-                        <UiSelect
-                          value={localImageHostSettings.pixhost.contentType}
-                          onChange={(event) =>
-                            updateLocalImageHostSettings({
-                              pixhost: { contentType: event.target.value },
-                            })
-                          }
-                          className="mt-1"
-                          aria-label={t('settings.imageHosting.pixhost.contentType')}
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.pixhost.contentType')}
+                          <UiSelect
+                            value={localImageHostSettings.pixhost.contentType}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                pixhost: { contentType: event.target.value },
+                              })
+                            }
+                            className="mt-1"
+                            aria-label={t('settings.imageHosting.pixhost.contentType')}
+                          >
+                            <option value="0">{t('settings.imageHosting.pixhost.contentTypes.family')}</option>
+                            <option value="1">{t('settings.imageHosting.pixhost.contentTypes.adult')}</option>
+                          </UiSelect>
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.pixhost.maxThumbnailSize')}
+                          <input
+                            type="number"
+                            min={100}
+                            max={500}
+                            step={10}
+                            value={localImageHostSettings.pixhost.maxThumbnailSize}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                pixhost: { maxThumbnailSize: event.target.value },
+                              })
+                            }
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                          />
+                        </label>
+                      </div>
+
+                      {testResult && testResult.provider === 'pixhost' && (
+                        <div
+                          role="status"
+                          className={`mt-3 rounded border p-2.5 text-xs break-all ${
+                            testResult.ok
+                              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                              : 'border-red-500/40 bg-red-500/10 text-red-200'
+                          }`}
                         >
-                          <option value="0">{t('settings.imageHosting.pixhost.contentTypes.family')}</option>
-                          <option value="1">{t('settings.imageHosting.pixhost.contentTypes.adult')}</option>
-                        </UiSelect>
-                      </label>
-
-                      <label className="text-xs font-medium text-text-muted">
-                        {t('settings.imageHosting.pixhost.maxThumbnailSize')}
-                        <input
-                          type="number"
-                          min={100}
-                          max={500}
-                          step={10}
-                          value={localImageHostSettings.pixhost.maxThumbnailSize}
-                          onChange={(event) =>
-                            updateLocalImageHostSettings({
-                              pixhost: { maxThumbnailSize: event.target.value },
-                            })
-                          }
-                          className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
-                        />
-                      </label>
+                          {testResult.message}
+                        </div>
+                      )}
                     </div>
-                  </div>
+                  )}
 
-                  <div className="rounded-lg border border-border-dark bg-bg-dark p-4">
-                    <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-sm font-medium text-text-dark">
-                          {t('settings.imageHosting.seedvault.title')}
-                        </h3>
-                        <p className="mt-1 text-xs text-text-muted">
-                          {t('settings.imageHosting.seedvault.desc')}
-                        </p>
+                  {localImageHostSettings.provider === 'seedvault' && (
+                    <div className="rounded-lg border border-border-dark bg-bg-dark p-4">
+                      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-medium text-text-dark">
+                            {t('settings.imageHosting.seedvault.title')}
+                          </h3>
+                          <p className="mt-1 text-xs text-text-muted">
+                            {t('settings.imageHosting.seedvault.desc')}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark disabled:opacity-50"
+                            disabled={testingImageHost !== null}
+                            onClick={() => void handleTestImageHost('seedvault')}
+                          >
+                            {testingImageHost === 'seedvault' ? (
+                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            ) : null}
+                            {testingImageHost === 'seedvault'
+                              ? t('settings.imageHosting.testing')
+                              : t('settings.imageHosting.testUpload')}
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark"
+                            onClick={() =>
+                              updateLocalImageHostSettings({
+                                seedvault: { ...DEFAULT_IMAGE_HOST_SETTINGS.seedvault },
+                              })
+                            }
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            {t('settings.imageHosting.restoreDefaults')}
+                          </button>
+                        </div>
                       </div>
-                      <button
-                        type="button"
-                        className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark"
-                        onClick={() =>
-                          updateLocalImageHostSettings({
-                            seedvault: { ...DEFAULT_IMAGE_HOST_SETTINGS.seedvault },
-                          })
-                        }
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        {t('settings.imageHosting.restoreDefaults')}
-                      </button>
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="text-xs font-medium text-text-muted sm:col-span-2">
+                          {t('settings.imageHosting.apiBaseUrl')}
+                          <input
+                            value={localImageHostSettings.seedvault.apiBaseUrl}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                seedvault: { apiBaseUrl: event.target.value },
+                              })
+                            }
+                            placeholder="https://img.seedvault.cn/api/v1"
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.seedvault.email')}
+                          <input
+                            type="email"
+                            value={localImageHostSettings.seedvault.email}
+                            onChange={(event) =>
+                              updateSeedvaultCredentials({ email: event.target.value })
+                            }
+                            autoComplete="username"
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.seedvault.password')}
+                          <input
+                            type="password"
+                            value={localImageHostSettings.seedvault.password}
+                            onChange={(event) =>
+                              updateSeedvaultCredentials({ password: event.target.value })
+                            }
+                            autoComplete="current-password"
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.seedvault.strategyId')}
+                          <input
+                            value={localImageHostSettings.seedvault.strategyId}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                seedvault: { strategyId: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.seedvault.strategyIdPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.seedvault.token')}
+                          <input
+                            value={localImageHostSettings.seedvault.token}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                seedvault: { token: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.seedvault.tokenPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                          />
+                        </label>
+                      </div>
+
+                      <p className="mt-3 text-xs leading-5 text-text-muted">
+                        {forceSeedvaultTokenRefresh
+                          ? t('settings.imageHosting.seedvault.tokenWillRefresh')
+                          : t('settings.imageHosting.seedvault.tokenHint')}
+                      </p>
+
+                      {testResult && testResult.provider === 'seedvault' && (
+                        <div
+                          role="status"
+                          className={`mt-3 rounded border p-2.5 text-xs break-all ${
+                            testResult.ok
+                              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                              : 'border-red-500/40 bg-red-500/10 text-red-200'
+                          }`}
+                        >
+                          {testResult.message}
+                        </div>
+                      )}
                     </div>
+                  )}
 
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="text-xs font-medium text-text-muted sm:col-span-2">
-                        {t('settings.imageHosting.apiBaseUrl')}
-                        <input
-                          value={localImageHostSettings.seedvault.apiBaseUrl}
-                          onChange={(event) =>
-                            updateLocalImageHostSettings({
-                              seedvault: { apiBaseUrl: event.target.value },
-                            })
-                          }
-                          placeholder="https://img.seedvault.cn/api/v1"
-                          className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
-                        />
-                      </label>
+                  {localImageHostSettings.provider === 'superbed' && (
+                    <div className="rounded-lg border border-border-dark bg-bg-dark p-4">
+                      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-medium text-text-dark">
+                            {t('settings.imageHosting.superbed.title')}
+                          </h3>
+                          <p className="mt-1 text-xs text-text-muted">
+                            {t('settings.imageHosting.superbed.desc')}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark disabled:opacity-50"
+                            disabled={testingImageHost !== null}
+                            onClick={() => void handleTestImageHost('superbed')}
+                          >
+                            {testingImageHost === 'superbed' ? (
+                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            ) : null}
+                            {testingImageHost === 'superbed'
+                              ? t('settings.imageHosting.testing')
+                              : t('settings.imageHosting.testUpload')}
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark"
+                            onClick={() =>
+                              updateLocalImageHostSettings({
+                                superbed: { ...DEFAULT_IMAGE_HOST_SETTINGS.superbed },
+                              })
+                            }
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            {t('settings.imageHosting.restoreDefaults')}
+                          </button>
+                        </div>
+                      </div>
 
-                      <label className="text-xs font-medium text-text-muted">
-                        {t('settings.imageHosting.seedvault.email')}
-                        <input
-                          type="email"
-                          value={localImageHostSettings.seedvault.email}
-                          onChange={(event) =>
-                            updateSeedvaultCredentials({ email: event.target.value })
-                          }
-                          autoComplete="username"
-                          className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
-                        />
-                      </label>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="text-xs font-medium text-text-muted sm:col-span-2">
+                          {t('settings.imageHosting.superbed.token')}
+                          <input
+                            type="password"
+                            value={localImageHostSettings.superbed.token}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                superbed: { token: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.superbed.tokenPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
+                          />
+                        </label>
 
-                      <label className="text-xs font-medium text-text-muted">
-                        {t('settings.imageHosting.seedvault.password')}
-                        <input
-                          type="password"
-                          value={localImageHostSettings.seedvault.password}
-                          onChange={(event) =>
-                            updateSeedvaultCredentials({ password: event.target.value })
-                          }
-                          autoComplete="current-password"
-                          className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
-                        />
-                      </label>
+                        <label className="text-xs font-medium text-text-muted sm:col-span-2">
+                          {t('settings.imageHosting.superbed.categories')}
+                          <input
+                            value={localImageHostSettings.superbed.categories}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                superbed: { categories: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.superbed.categoriesPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                          />
+                        </label>
+                      </div>
 
-                      <label className="text-xs font-medium text-text-muted">
-                        {t('settings.imageHosting.seedvault.strategyId')}
-                        <input
-                          value={localImageHostSettings.seedvault.strategyId}
-                          onChange={(event) =>
-                            updateLocalImageHostSettings({
-                              seedvault: { strategyId: event.target.value },
-                            })
-                          }
-                          placeholder={t('settings.imageHosting.seedvault.strategyIdPlaceholder')}
-                          className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
-                        />
-                      </label>
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-text-muted">
+                        <span>{t('settings.imageHosting.superbed.tokenHint')}</span>
+                        <button
+                          type="button"
+                          onClick={() => void openUrl('https://www.superbed.cn/timeline')}
+                          className="inline-flex items-center gap-1 text-accent hover:underline"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          {t('settings.imageHosting.superbed.getTokenLink')}
+                        </button>
+                      </div>
 
-                      <label className="text-xs font-medium text-text-muted">
-                        {t('settings.imageHosting.seedvault.token')}
-                        <input
-                          value={localImageHostSettings.seedvault.token}
-                          onChange={(event) =>
-                            updateLocalImageHostSettings({
-                              seedvault: { token: event.target.value },
-                            })
-                          }
-                          placeholder={t('settings.imageHosting.seedvault.tokenPlaceholder')}
-                          className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
-                        />
-                      </label>
+                      {testResult && testResult.provider === 'superbed' && (
+                        <div
+                          role="status"
+                          className={`mt-3 rounded border p-2.5 text-xs break-all ${
+                            testResult.ok
+                              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                              : 'border-red-500/40 bg-red-500/10 text-red-200'
+                          }`}
+                        >
+                          {testResult.message}
+                        </div>
+                      )}
                     </div>
+                  )}
 
-                    <p className="mt-3 text-xs leading-5 text-text-muted">
-                      {forceSeedvaultTokenRefresh
-                        ? t('settings.imageHosting.seedvault.tokenWillRefresh')
-                        : t('settings.imageHosting.seedvault.tokenHint')}
-                    </p>
-                  </div>
+                  {localImageHostSettings.provider === 'cloudflareR2' && (
+                    <div className="rounded-lg border border-border-dark bg-bg-dark p-4">
+                      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-medium text-text-dark">
+                            {t('settings.imageHosting.cloudflareR2.title')}
+                          </h3>
+                          <p className="mt-1 text-xs text-text-muted">
+                            {t('settings.imageHosting.cloudflareR2.desc')}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark disabled:opacity-50"
+                            disabled={testingImageHost !== null}
+                            onClick={() => void handleTestImageHost('cloudflareR2')}
+                          >
+                            {testingImageHost === 'cloudflareR2' ? (
+                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            ) : null}
+                            {testingImageHost === 'cloudflareR2'
+                              ? t('settings.imageHosting.testing')
+                              : t('settings.imageHosting.testUpload')}
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark"
+                            onClick={() =>
+                              updateLocalImageHostSettings({
+                                cloudflareR2: { ...DEFAULT_IMAGE_HOST_SETTINGS.cloudflareR2 },
+                              })
+                            }
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            {t('settings.imageHosting.restoreDefaults')}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.cloudflareR2.accountId')}
+                          <input
+                            value={localImageHostSettings.cloudflareR2.accountId}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                cloudflareR2: { accountId: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.cloudflareR2.accountIdPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.cloudflareR2.bucketName')}
+                          <input
+                            value={localImageHostSettings.cloudflareR2.bucketName}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                cloudflareR2: { bucketName: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.cloudflareR2.bucketNamePlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.cloudflareR2.accessKeyId')}
+                          <input
+                            value={localImageHostSettings.cloudflareR2.accessKeyId}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                cloudflareR2: { accessKeyId: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.cloudflareR2.accessKeyIdPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.cloudflareR2.secretAccessKey')}
+                          <input
+                            type="password"
+                            value={localImageHostSettings.cloudflareR2.secretAccessKey}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                cloudflareR2: { secretAccessKey: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.cloudflareR2.secretAccessKeyPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.cloudflareR2.publicDomain')}
+                          <input
+                            value={localImageHostSettings.cloudflareR2.publicDomain}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                cloudflareR2: { publicDomain: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.cloudflareR2.publicDomainPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.cloudflareR2.prefix')}
+                          <input
+                            value={localImageHostSettings.cloudflareR2.prefix}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                cloudflareR2: { prefix: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.cloudflareR2.prefixPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                          />
+                        </label>
+                      </div>
+
+                      <p className="mt-3 text-xs leading-5 text-text-muted">
+                        {t('settings.imageHosting.cloudflareR2.dashboardHint')}
+                      </p>
+
+                      {testResult && testResult.provider === 'cloudflareR2' && (
+                        <div
+                          role="status"
+                          className={`mt-3 rounded border p-2.5 text-xs break-all ${
+                            testResult.ok
+                              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                              : 'border-red-500/40 bg-red-500/10 text-red-200'
+                          }`}
+                        >
+                          {testResult.message}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {settingsSaveError && (
                     <div role="alert" className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-200">

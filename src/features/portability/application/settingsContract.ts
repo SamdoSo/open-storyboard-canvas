@@ -400,15 +400,30 @@ function validateModelsCategory(category: Record<string, unknown>): void {
 }
 
 function validateImageHostingCategory(category: Record<string, unknown>): void {
-  assertKnownFields(category, new Set(['enabled', 'provider', 'pixhost', 'seedvault']), 'imageHosting');
+  assertKnownFields(category, new Set(['enabled', 'provider', 'pixhost', 'seedvault', 'superbed', 'cloudflareR2']), 'imageHosting');
   if (typeof category.enabled !== 'boolean'
-    || !['pixhost', 'seedvault'].includes(String(category.provider))
+    || !['pixhost', 'seedvault', 'superbed', 'cloudflareR2'].includes(String(category.provider))
     || !isPlainRecord(category.pixhost)
-    || !isPlainRecord(category.seedvault)) {
+    || !isPlainRecord(category.seedvault)
+    || (category.superbed !== undefined && !isPlainRecord(category.superbed))
+    || (category.cloudflareR2 !== undefined && !isPlainRecord(category.cloudflareR2))) {
     throw new Error('imageHosting is invalid.');
   }
   assertKnownFields(category.pixhost, new Set(['apiBaseUrl', 'contentType', 'maxThumbnailSize']), 'imageHosting.pixhost');
   assertKnownFields(category.seedvault, new Set(['apiBaseUrl', 'strategyId']), 'imageHosting.seedvault');
+  if (category.superbed) {
+    assertKnownFields(category.superbed as Record<string, unknown>, new Set(['categories']), 'imageHosting.superbed');
+    if (typeof (category.superbed as Record<string, unknown>).categories !== 'string') {
+      throw new Error('imageHosting.superbed contains an invalid field.');
+    }
+  }
+  if (category.cloudflareR2) {
+    assertKnownFields(category.cloudflareR2 as Record<string, unknown>, new Set(['accountId', 'accessKeyId', 'bucketName', 'publicDomain', 'prefix']), 'imageHosting.cloudflareR2');
+    const r2 = category.cloudflareR2 as Record<string, unknown>;
+    if (![r2.accountId, r2.accessKeyId, r2.bucketName, r2.publicDomain, r2.prefix].every((item) => typeof item === 'string')) {
+      throw new Error('imageHosting.cloudflareR2 contains an invalid field.');
+    }
+  }
   if (![category.pixhost.apiBaseUrl, category.pixhost.contentType, category.pixhost.maxThumbnailSize,
     category.seedvault.apiBaseUrl, category.seedvault.strategyId].every((item) => typeof item === 'string')) {
     throw new Error('imageHosting contains an invalid field.');

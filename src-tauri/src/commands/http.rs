@@ -19,6 +19,7 @@ pub struct HttpRequestDto {
     pub headers: Option<HashMap<String, String>>,
     pub body_mode: Option<String>,
     pub body: Option<Value>,
+    pub raw_body: Option<String>,
     pub multipart: Option<MultipartBodyDto>,
     pub timeout_ms: Option<u64>,
     pub network_route: Option<String>,
@@ -129,6 +130,7 @@ fn summarize_http_request(request: &HttpRequestDto) -> SafeHttpRequestSummary {
         body_bytes: body
             .and_then(|value| serde_json::to_vec(value).ok())
             .map(|value| value.len())
+            .or_else(|| request.raw_body.as_ref().map(|s| s.len()))
             .unwrap_or(0),
         network_route: request
             .network_route
@@ -257,6 +259,20 @@ fn decode_multipart_file(file: &MultipartFileDto) -> Result<(Vec<u8>, Option<Str
     Err("multipart file must include dataUrl or base64".to_string())
 }
 
+fn decode_raw_payload(raw: &str) -> Result<Vec<u8>, String> {
+    let trimmed = raw.trim();
+    if trimmed.starts_with("data:") {
+        let (bytes, _) = parse_data_url(trimmed)?;
+        return Ok(bytes);
+    }
+    if let Ok(bytes) = BASE64_STANDARD.decode(trimmed) {
+        if !bytes.is_empty() {
+            return Ok(bytes);
+        }
+    }
+    Ok(raw.as_bytes().to_vec())
+}
+
 fn build_multipart_form(body: MultipartBodyDto) -> Result<Form, String> {
     let mut form = Form::new();
     if let Some(fields) = body.fields {
@@ -300,6 +316,7 @@ fn normalize_body_mode(value: Option<&str>) -> String {
     match token.as_str() {
         "json" => "json".to_string(),
         "multipart" | "multipart/form-data" => "multipart".to_string(),
+        "raw" | "binary" | "bytes" | "octet-stream" => "raw".to_string(),
         "form"
         | "urlencoded"
         | "url-encoded"
@@ -367,13 +384,20 @@ fn build_http_request(
 ) -> Result<reqwest::RequestBuilder, String> {
     let method = request.method.trim().to_uppercase();
     let body_mode = normalize_body_mode(request.body_mode.as_deref());
-    if body_mode != "json" && body_mode != "multipart" && body_mode != "form-urlencoded" {
+    if body_mode != "json"
+        && body_mode != "multipart"
+        && body_mode != "form-urlencoded"
+        && body_mode != "raw"
+    {
         return Err(format!("Unsupported HTTP bodyMode: {body_mode}"));
     }
 
     let mut builder = match method.as_str() {
         "GET" => client.get(&request.url),
         "POST" => client.post(&request.url),
+        "PUT" => client.put(&request.url),
+        "PATCH" => client.patch(&request.url),
+        "DELETE" => client.delete(&request.url),
         other => return Err(format!("Unsupported HTTP method: {other}")),
     }
     .timeout(Duration::from_millis(request.timeout_ms.unwrap_or(180_000)));
@@ -393,7 +417,7 @@ fn build_http_request(
         }
     }
 
-    if method == "POST" {
+    if method == "POST" || method == "PUT" || method == "PATCH" {
         if body_mode == "multipart" {
             let multipart = request
                 .multipart
@@ -408,6 +432,20 @@ fn build_http_request(
             builder = builder
                 .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .body(body);
+        } else if body_mode == "raw" {
+            let payload = request
+                .raw_body
+                .or_else(|| {
+                    request.body.and_then(|v| match v {
+                        Value::String(s) => Some(s),
+                        _ => None,
+                    })
+                })
+                .ok_or_else(|| {
+                    "raw bodyMode requires rawBody or string body payload".to_string()
+                })?;
+            let bytes = decode_raw_payload(&payload)?;
+            builder = builder.body(bytes);
         } else if let Some(body) = request.body {
             builder = builder.json(&body);
         }

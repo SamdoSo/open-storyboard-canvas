@@ -38,7 +38,7 @@ export type CanvasMouseBindingSlot =
   | 'middleClick'
   | 'middleDrag';
 export type CanvasMouseBindings = Record<CanvasMouseBindingSlot, CanvasMouseAction>;
-export type ImageHostProvider = 'pixhost' | 'seedvault';
+export type ImageHostProvider = 'pixhost' | 'seedvault' | 'superbed' | 'cloudflareR2';
 export type AudioOutputMode = 'server' | 'segmented';
 export type AudioProviderKind = 'local-doubao-tts' | 'gradio-voxcpm';
 export type ProviderApiKeys = Record<string, string>;
@@ -104,6 +104,18 @@ export interface ImageHostSettings {
     token: string;
     strategyId: string;
   };
+  superbed: {
+    token: string;
+    categories: string;
+  };
+  cloudflareR2: {
+    accountId: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+    bucketName: string;
+    publicDomain: string;
+    prefix: string;
+  };
 }
 
 export interface AudioVoiceOption {
@@ -157,6 +169,18 @@ export const DEFAULT_IMAGE_HOST_SETTINGS: ImageHostSettings = {
     password: '',
     token: '',
     strategyId: '',
+  },
+  superbed: {
+    token: '',
+    categories: '',
+  },
+  cloudflareR2: {
+    accountId: '',
+    accessKeyId: '',
+    secretAccessKey: '',
+    bucketName: '',
+    publicDomain: '',
+    prefix: 'storyboard',
   },
 };
 
@@ -378,7 +402,9 @@ function normalizeUrlSetting(input: unknown, fallback: string): string {
 }
 
 function normalizeImageHostProvider(input: unknown): ImageHostProvider {
-  return input === 'seedvault' || input === 'pixhost' ? input : 'pixhost';
+  return input === 'seedvault' || input === 'superbed' || input === 'cloudflareR2' || input === 'pixhost'
+    ? input
+    : 'pixhost';
 }
 
 function normalizeAudioOutputMode(input: unknown, fallback: AudioOutputMode): AudioOutputMode {
@@ -642,6 +668,12 @@ export function normalizeImageHostSettings(input: unknown): ImageHostSettings {
   const rawSeedvault = raw.seedvault && typeof raw.seedvault === 'object'
     ? raw.seedvault as Partial<ImageHostSettings['seedvault']>
     : {};
+  const rawSuperbed = raw.superbed && typeof raw.superbed === 'object'
+    ? raw.superbed as Partial<ImageHostSettings['superbed']>
+    : {};
+  const rawCloudflareR2 = raw.cloudflareR2 && typeof raw.cloudflareR2 === 'object'
+    ? raw.cloudflareR2 as Partial<ImageHostSettings['cloudflareR2']>
+    : {};
 
   return {
     enabled: raw.enabled === true,
@@ -668,6 +700,18 @@ export function normalizeImageHostSettings(input: unknown): ImageHostSettings {
       password: typeof rawSeedvault.password === 'string' ? rawSeedvault.password : '',
       token: typeof rawSeedvault.token === 'string' ? rawSeedvault.token.trim() : '',
       strategyId: typeof rawSeedvault.strategyId === 'string' ? rawSeedvault.strategyId.trim() : '',
+    },
+    superbed: {
+      token: typeof rawSuperbed.token === 'string' ? rawSuperbed.token.trim() : '',
+      categories: typeof rawSuperbed.categories === 'string' ? rawSuperbed.categories.trim() : '',
+    },
+    cloudflareR2: {
+      accountId: typeof rawCloudflareR2.accountId === 'string' ? rawCloudflareR2.accountId.trim() : '',
+      accessKeyId: typeof rawCloudflareR2.accessKeyId === 'string' ? rawCloudflareR2.accessKeyId.trim() : '',
+      secretAccessKey: typeof rawCloudflareR2.secretAccessKey === 'string' ? rawCloudflareR2.secretAccessKey.trim() : '',
+      bucketName: typeof rawCloudflareR2.bucketName === 'string' ? rawCloudflareR2.bucketName.trim() : '',
+      publicDomain: typeof rawCloudflareR2.publicDomain === 'string' ? rawCloudflareR2.publicDomain.trim() : '',
+      prefix: typeof rawCloudflareR2.prefix === 'string' ? rawCloudflareR2.prefix.trim() : DEFAULT_IMAGE_HOST_SETTINGS.cloudflareR2.prefix,
     },
   };
 }

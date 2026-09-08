@@ -245,10 +245,10 @@ export function validateSettingsBundle(value: unknown): SettingsBundlePayload {
       if (!isPlainRecord(value.credentials.imageHost)) {
         throw new PortabilityValidationError('invalid-settings', 'imageHost credentials must be an object.');
       }
-      if (Object.keys(value.credentials.imageHost).some((field) => !['email', 'password', 'token'].includes(field))) {
+      if (Object.keys(value.credentials.imageHost).some((field) => !['email', 'password', 'token', 'superbedToken', 'r2SecretAccessKey'].includes(field))) {
         throw new PortabilityValidationError('invalid-settings', 'imageHost credentials contain an unknown field.');
       }
-      for (const field of ['email', 'password', 'token']) {
+      for (const field of ['email', 'password', 'token', 'superbedToken', 'r2SecretAccessKey']) {
         const fieldValue = value.credentials.imageHost[field];
         if (fieldValue !== undefined && typeof fieldValue !== 'string') {
           throw new PortabilityValidationError('invalid-settings', `imageHost.${field} must be a string.`);

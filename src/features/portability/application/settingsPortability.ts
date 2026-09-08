@@ -58,6 +58,16 @@ function buildImageHostCategory(): Record<string, unknown> {
       apiBaseUrl: settings.seedvault.apiBaseUrl,
       strategyId: settings.seedvault.strategyId,
     },
+    superbed: {
+      categories: settings.superbed.categories,
+    },
+    cloudflareR2: {
+      accountId: settings.cloudflareR2.accountId,
+      accessKeyId: settings.cloudflareR2.accessKeyId,
+      bucketName: settings.cloudflareR2.bucketName,
+      publicDomain: settings.cloudflareR2.publicDomain,
+      prefix: settings.cloudflareR2.prefix,
+    },
   };
 }
 
@@ -103,6 +113,8 @@ export function buildSettingsBundle(includeCredentials: boolean): SettingsBundle
         email: settings.imageHostSettings.seedvault.email,
         password: settings.imageHostSettings.seedvault.password,
         token: settings.imageHostSettings.seedvault.token,
+        superbedToken: settings.imageHostSettings.superbed.token,
+        r2SecretAccessKey: settings.imageHostSettings.cloudflareR2.secretAccessKey,
       },
     };
   }
@@ -212,6 +224,8 @@ function currentCredentialSnapshot(): Record<string, unknown> {
       email: settings.imageHostSettings.seedvault.email,
       password: settings.imageHostSettings.seedvault.password,
       token: settings.imageHostSettings.seedvault.token,
+      superbedToken: settings.imageHostSettings.superbed.token,
+      r2SecretAccessKey: settings.imageHostSettings.cloudflareR2.secretAccessKey,
     },
   };
 }
@@ -313,6 +327,8 @@ export function applySettingsBundle(
     const current = useSettingsStore.getState().imageHostSettings;
     const pixhost = isPlainRecord(imageHosting.pixhost) ? imageHosting.pixhost : {};
     const seedvault = isPlainRecord(imageHosting.seedvault) ? imageHosting.seedvault : {};
+    const superbed = isPlainRecord(imageHosting.superbed) ? imageHosting.superbed : {};
+    const cloudflareR2 = isPlainRecord(imageHosting.cloudflareR2) ? imageHosting.cloudflareR2 : {};
     const importedCredentials = payload.includesCredentials && selectedCategories.has('credentials')
       ? payload.credentials?.imageHost
       : undefined;
@@ -323,7 +339,19 @@ export function applySettingsBundle(
       seedvault: {
         ...current.seedvault,
         ...seedvault,
-        ...(importedCredentials ?? {}),
+        ...(importedCredentials?.email !== undefined ? { email: importedCredentials.email } : {}),
+        ...(importedCredentials?.password !== undefined ? { password: importedCredentials.password } : {}),
+        ...(importedCredentials?.token !== undefined ? { token: importedCredentials.token } : {}),
+      },
+      superbed: {
+        ...current.superbed,
+        ...superbed,
+        ...(importedCredentials?.superbedToken !== undefined ? { token: importedCredentials.superbedToken } : {}),
+      },
+      cloudflareR2: {
+        ...current.cloudflareR2,
+        ...cloudflareR2,
+        ...(importedCredentials?.r2SecretAccessKey !== undefined ? { secretAccessKey: importedCredentials.r2SecretAccessKey } : {}),
       },
     });
   }
