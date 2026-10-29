@@ -2042,7 +2042,7 @@ describe('Volcengine Seedance video request body', () => {
     });
   });
 
-  it('maps a single reference image to first_frame', () => {
+  it('maps a single reference image to first_frame and auto-coerces ratio to adaptive', () => {
     useCustomProvidersStore.getState().replaceAll([seedanceVideoProvider()]);
 
     const debug = buildCustomVideoProviderRequestDebugPreview({
@@ -2054,6 +2054,7 @@ describe('Volcengine Seedance video request body', () => {
     });
 
     const body = debug.body as Record<string, unknown>;
+    expect(body.ratio).toBe('adaptive');
     const content = body.content as Array<Record<string, unknown>>;
     expect(content).toHaveLength(2);
     expect(content[0]).toEqual({
@@ -2067,7 +2068,7 @@ describe('Volcengine Seedance video request body', () => {
     });
   });
 
-  it('maps two reference images to first_frame and last_frame', () => {
+  it('maps two reference images to first_frame and last_frame and auto-coerces ratio to adaptive', () => {
     useCustomProvidersStore.getState().replaceAll([seedanceVideoProvider()]);
 
     const debug = buildCustomVideoProviderRequestDebugPreview({
@@ -2082,6 +2083,7 @@ describe('Volcengine Seedance video request body', () => {
     });
 
     const body = debug.body as Record<string, unknown>;
+    expect(body.ratio).toBe('adaptive');
     const content = body.content as Array<Record<string, unknown>>;
     expect(content).toHaveLength(3);
     expect(content[0]).toEqual({
@@ -2098,6 +2100,64 @@ describe('Volcengine Seedance video request body', () => {
       type: 'text',
       text: '日出到日落过渡',
     });
+  });
+
+  it('auto-detects video editing task: coerces ratio to adaptive and duration to -1', () => {
+    useCustomProvidersStore.getState().replaceAll([seedanceVideoProvider()]);
+
+    const debug = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '把主角的衣服替换为红色风衣',
+      model: 'custom:seedance-1:doubao-seedance-2-5-260628',
+      size: '1080p',
+      aspect_ratio: '16:9',
+      reference_videos: ['https://cdn.example.com/source.mp4'],
+      extra_params: { seconds: 10 },
+    });
+
+    const body = debug.body as Record<string, unknown>;
+    expect(body.omni_reference_task_type).toBe('edit');
+    expect(body.ratio).toBe('adaptive');
+    expect(body.duration).toBe(-1);
+  });
+
+  it('auto-detects video extension task: coerces ratio to adaptive', () => {
+    useCustomProvidersStore.getState().replaceAll([seedanceVideoProvider()]);
+
+    const debug = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '向后延续这段舞蹈动作',
+      model: 'custom:seedance-1:doubao-seedance-2-5-260628',
+      size: '720p',
+      aspect_ratio: '16:9',
+      reference_videos: ['https://cdn.example.com/dance.mp4'],
+      extra_params: { seconds: 8 },
+    });
+
+    const body = debug.body as Record<string, unknown>;
+    expect(body.omni_reference_task_type).toBe('extend');
+    expect(body.ratio).toBe('adaptive');
+    expect(body.duration).toBe(8);
+  });
+
+  it('clamps positive duration to [4, 30] per Seedance 2.5 spec', () => {
+    useCustomProvidersStore.getState().replaceAll([seedanceVideoProvider()]);
+
+    const debugUnder = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '太短时长测试',
+      model: 'custom:seedance-1:doubao-seedance-2-5-260628',
+      size: '720p',
+      aspect_ratio: '16:9',
+      extra_params: { seconds: 2 },
+    });
+    expect((debugUnder.body as Record<string, unknown>).duration).toBe(4);
+
+    const debugOver = buildCustomVideoProviderRequestDebugPreview({
+      prompt: '超长时长测试',
+      model: 'custom:seedance-1:doubao-seedance-2-5-260628',
+      size: '720p',
+      aspect_ratio: '16:9',
+      extra_params: { seconds: 45 },
+    });
+    expect((debugOver.body as Record<string, unknown>).duration).toBe(30);
   });
 
   it('maps multimodal images, videos, and audios to reference roles', () => {

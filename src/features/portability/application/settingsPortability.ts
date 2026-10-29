@@ -49,17 +49,21 @@ function buildImageHostCategory(): Record<string, unknown> {
   return {
     enabled: settings.enabled,
     provider: settings.provider,
-    pixhost: {
-      apiBaseUrl: settings.pixhost.apiBaseUrl,
-      contentType: settings.pixhost.contentType,
-      maxThumbnailSize: settings.pixhost.maxThumbnailSize,
+    volcengineTos: {
+      accessKeyId: settings.volcengineTos.accessKeyId,
+      region: settings.volcengineTos.region,
+      bucketName: settings.volcengineTos.bucketName,
+      endpoint: settings.volcengineTos.endpoint,
+      publicDomain: settings.volcengineTos.publicDomain,
+      prefix: settings.volcengineTos.prefix,
     },
-    seedvault: {
-      apiBaseUrl: settings.seedvault.apiBaseUrl,
-      strategyId: settings.seedvault.strategyId,
-    },
-    superbed: {
-      categories: settings.superbed.categories,
+    tencentCos: {
+      secretId: settings.tencentCos.secretId,
+      region: settings.tencentCos.region,
+      bucketName: settings.tencentCos.bucketName,
+      endpoint: settings.tencentCos.endpoint,
+      publicDomain: settings.tencentCos.publicDomain,
+      prefix: settings.tencentCos.prefix,
     },
     cloudflareR2: {
       accountId: settings.cloudflareR2.accountId,
@@ -110,10 +114,8 @@ export function buildSettingsBundle(includeCredentials: boolean): SettingsBundle
       agnesApiKey: settings.agnesApiKey,
       customProviderApiKeys,
       imageHost: {
-        email: settings.imageHostSettings.seedvault.email,
-        password: settings.imageHostSettings.seedvault.password,
-        token: settings.imageHostSettings.seedvault.token,
-        superbedToken: settings.imageHostSettings.superbed.token,
+        tosSecretAccessKey: settings.imageHostSettings.volcengineTos.secretAccessKey,
+        cosSecretKey: settings.imageHostSettings.tencentCos.secretKey,
         r2SecretAccessKey: settings.imageHostSettings.cloudflareR2.secretAccessKey,
       },
     };
@@ -221,10 +223,8 @@ function currentCredentialSnapshot(): Record<string, unknown> {
       providers.filter((provider) => provider.apiKey.trim()).map((provider) => [provider.id, provider.apiKey])
     ),
     imageHost: {
-      email: settings.imageHostSettings.seedvault.email,
-      password: settings.imageHostSettings.seedvault.password,
-      token: settings.imageHostSettings.seedvault.token,
-      superbedToken: settings.imageHostSettings.superbed.token,
+      tosSecretAccessKey: settings.imageHostSettings.volcengineTos.secretAccessKey,
+      cosSecretKey: settings.imageHostSettings.tencentCos.secretKey,
       r2SecretAccessKey: settings.imageHostSettings.cloudflareR2.secretAccessKey,
     },
   };
@@ -325,9 +325,8 @@ export function applySettingsBundle(
   const imageHosting = payload.categories.imageHosting;
   if (selectedCategories.has('imageHosting') && imageHosting) {
     const current = useSettingsStore.getState().imageHostSettings;
-    const pixhost = isPlainRecord(imageHosting.pixhost) ? imageHosting.pixhost : {};
-    const seedvault = isPlainRecord(imageHosting.seedvault) ? imageHosting.seedvault : {};
-    const superbed = isPlainRecord(imageHosting.superbed) ? imageHosting.superbed : {};
+    const volcengineTos = isPlainRecord(imageHosting.volcengineTos) ? imageHosting.volcengineTos : {};
+    const tencentCos = isPlainRecord(imageHosting.tencentCos) ? imageHosting.tencentCos : {};
     const cloudflareR2 = isPlainRecord(imageHosting.cloudflareR2) ? imageHosting.cloudflareR2 : {};
     const importedCredentials = payload.includesCredentials && selectedCategories.has('credentials')
       ? payload.credentials?.imageHost
@@ -335,18 +334,15 @@ export function applySettingsBundle(
     partial.imageHostSettings = normalizeImageHostSettings({
       ...current,
       ...pickIncoming(imageHosting, ['enabled', 'provider']),
-      pixhost: { ...current.pixhost, ...pixhost },
-      seedvault: {
-        ...current.seedvault,
-        ...seedvault,
-        ...(importedCredentials?.email !== undefined ? { email: importedCredentials.email } : {}),
-        ...(importedCredentials?.password !== undefined ? { password: importedCredentials.password } : {}),
-        ...(importedCredentials?.token !== undefined ? { token: importedCredentials.token } : {}),
+      volcengineTos: {
+        ...current.volcengineTos,
+        ...volcengineTos,
+        ...(importedCredentials?.tosSecretAccessKey !== undefined ? { secretAccessKey: importedCredentials.tosSecretAccessKey } : {}),
       },
-      superbed: {
-        ...current.superbed,
-        ...superbed,
-        ...(importedCredentials?.superbedToken !== undefined ? { token: importedCredentials.superbedToken } : {}),
+      tencentCos: {
+        ...current.tencentCos,
+        ...tencentCos,
+        ...(importedCredentials?.cosSecretKey !== undefined ? { secretKey: importedCredentials.cosSecretKey } : {}),
       },
       cloudflareR2: {
         ...current.cloudflareR2,

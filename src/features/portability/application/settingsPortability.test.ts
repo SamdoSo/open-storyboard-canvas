@@ -34,11 +34,10 @@ describe('settings portability security', () => {
       downloadPresetPaths: ['/Users/test/Downloads'],
       imageHostSettings: {
         ...originalSettings.imageHostSettings,
-        seedvault: {
-          ...originalSettings.imageHostSettings.seedvault,
-          email: 'person@example.com',
-          password: 'secret-password',
-          token: 'secret-token',
+        volcengineTos: {
+          ...originalSettings.imageHostSettings.volcengineTos,
+          accessKeyId: 'test-ak',
+          secretAccessKey: 'secret-password',
         },
       },
     });
@@ -155,6 +154,48 @@ describe('settings portability security', () => {
     useSettingsStore.setState({ textAgents: [] });
     applySettingsBundle(bundle, new Set(['prompts']));
     expect(useSettingsStore.getState().textAgents).toEqual([legacyAgent]);
+  });
+
+  it('exports and imports tencentCos settings and credentials cleanly', () => {
+    useSettingsStore.setState({
+      imageHostSettings: {
+        ...originalSettings.imageHostSettings,
+        enabled: true,
+        provider: 'tencentCos',
+        tencentCos: {
+          secretId: 'cos-secret-id',
+          secretKey: 'cos-secret-key',
+          region: 'ap-guangzhou',
+          bucketName: 'test-bucket-1250000000',
+          endpoint: '',
+          publicDomain: 'https://cos.example.com',
+          prefix: 'storyboard',
+        },
+      },
+    });
+
+    const bundleWithoutCreds = buildSettingsBundle(false);
+    expect(bundleWithoutCreds.categories.imageHosting.provider).toBe('tencentCos');
+    expect(JSON.stringify(bundleWithoutCreds)).not.toContain('cos-secret-key');
+
+    const bundleWithCreds = buildSettingsBundle(true);
+    expect(bundleWithCreds.credentials?.imageHost?.cosSecretKey).toBe('cos-secret-key');
+
+    useSettingsStore.setState({
+      imageHostSettings: {
+        ...originalSettings.imageHostSettings,
+        enabled: false,
+        provider: 'volcengineTos',
+      },
+    });
+
+    applySettingsBundle(bundleWithCreds, new Set(['imageHosting', 'credentials']));
+    const imported = useSettingsStore.getState().imageHostSettings;
+    expect(imported.enabled).toBe(true);
+    expect(imported.provider).toBe('tencentCos');
+    expect(imported.tencentCos.secretId).toBe('cos-secret-id');
+    expect(imported.tencentCos.secretKey).toBe('cos-secret-key');
+    expect(imported.tencentCos.bucketName).toBe('test-bucket-1250000000');
   });
 
   it('rejects oversized settings text before JSON parsing', () => {

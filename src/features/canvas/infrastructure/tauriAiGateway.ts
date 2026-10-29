@@ -5,7 +5,7 @@ import {
   submitGenerateImageJob,
 } from '@/commands/ai';
 import { imageUrlToDataUrl, persistImageLocally } from '@/features/canvas/application/imageData';
-import { uploadImageToConfiguredHost } from '@/features/canvas/application/imageHosting';
+import { uploadImageToConfiguredHost, uploadMediaToConfiguredHost } from '@/features/canvas/application/imageHosting';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { normalizeVideoInputSchema } from '../application/videoInputSchema';
 
@@ -93,6 +93,44 @@ async function normalizeVideoReferenceImages(payload: GenerateVideoPayload): Pro
   return await Promise.all(limitedSources.map(async (imageUrl) => await imageUrlToDataUrl(imageUrl)));
 }
 
+async function normalizeVideoReferenceVideos(payload: GenerateVideoPayload): Promise<string[] | undefined> {
+  const sources = payload.referenceVideos ?? [];
+  if (sources.length === 0) return undefined;
+  const inputSchema = normalizeVideoInputSchema(payload.extraParams?.videoInputSchema);
+  const limitedSources = inputSchema.video.enabled
+    ? (inputSchema.video.max > 0 ? sources.slice(0, inputSchema.video.max) : sources)
+    : sources;
+  if (limitedSources.length === 0) return undefined;
+  if (inputSchema.video.requireImageHost) {
+    const imageHostSettings = useSettingsStore.getState().imageHostSettings;
+    return await Promise.all(
+      limitedSources.map(async (videoUrl, index) =>
+        await uploadMediaToConfiguredHost(videoUrl, index, imageHostSettings, 'video')
+      )
+    );
+  }
+  return limitedSources;
+}
+
+async function normalizeVideoReferenceAudios(payload: GenerateVideoPayload): Promise<string[] | undefined> {
+  const sources = payload.referenceAudios ?? [];
+  if (sources.length === 0) return undefined;
+  const inputSchema = normalizeVideoInputSchema(payload.extraParams?.videoInputSchema);
+  const limitedSources = inputSchema.audio.enabled
+    ? (inputSchema.audio.max > 0 ? sources.slice(0, inputSchema.audio.max) : sources)
+    : sources;
+  if (limitedSources.length === 0) return undefined;
+  if (inputSchema.audio.requireImageHost) {
+    const imageHostSettings = useSettingsStore.getState().imageHostSettings;
+    return await Promise.all(
+      limitedSources.map(async (audioUrl, index) =>
+        await uploadMediaToConfiguredHost(audioUrl, index, imageHostSettings, 'audio')
+      )
+    );
+  }
+  return limitedSources;
+}
+
 function summarizeDebugString(value: string, maxLength = 500): string {
   const trimmed = value.trim();
   const commaIndex = trimmed.indexOf(',');
@@ -174,14 +212,16 @@ export async function buildGenerateVideoDebugPreview(
     throw new Error('视频生成当前仅支持自定义视频服务商配置或即梦 CLI');
   }
   const normalizedReferenceImages = await normalizeVideoReferenceImages(payload);
+  const normalizedReferenceVideos = await normalizeVideoReferenceVideos(payload);
+  const normalizedReferenceAudios = await normalizeVideoReferenceAudios(payload);
   const request = {
     prompt: payload.prompt,
     model: payload.model,
     size: payload.size,
     aspect_ratio: payload.aspectRatio ?? 'auto',
     reference_images: normalizedReferenceImages,
-    reference_videos: payload.referenceVideos,
-    reference_audios: payload.referenceAudios,
+    reference_videos: normalizedReferenceVideos,
+    reference_audios: normalizedReferenceAudios,
     extra_params: {
       ...(payload.extraParams ?? {}),
       ...(typeof payload.seconds === 'number' ? { seconds: payload.seconds } : {}),
@@ -196,8 +236,8 @@ export async function buildGenerateVideoDebugPreview(
       size: payload.size,
       aspectRatio: payload.aspectRatio ?? 'auto',
       referenceImages: normalizedReferenceImages?.map((image) => summarizeDebugString(image)),
-      referenceVideos: payload.referenceVideos,
-      referenceAudios: payload.referenceAudios,
+      referenceVideos: normalizedReferenceVideos?.map((video) => summarizeDebugString(video)),
+      referenceAudios: normalizedReferenceAudios?.map((audio) => summarizeDebugString(audio)),
       extraParams: summarizeDebugValue(request.extra_params),
     },
     providerRequest: route === 'dreamina'
@@ -247,6 +287,8 @@ export const tauriAiGateway: AiGateway = {
       throw new Error('视频生成当前仅支持自定义视频服务商配置或即梦 CLI');
     }
     const normalizedReferenceImages = await normalizeVideoReferenceImages(payload);
+    const normalizedReferenceVideos = await normalizeVideoReferenceVideos(payload);
+    const normalizedReferenceAudios = await normalizeVideoReferenceAudios(payload);
     if (isDreaminaModel(payload.model)) {
       return await submitDreaminaVideoJob({
         ...payload,
@@ -259,8 +301,8 @@ export const tauriAiGateway: AiGateway = {
       size: payload.size,
       aspect_ratio: payload.aspectRatio ?? 'auto',
       reference_images: normalizedReferenceImages,
-      reference_videos: payload.referenceVideos,
-      reference_audios: payload.referenceAudios,
+      reference_videos: normalizedReferenceVideos,
+      reference_audios: normalizedReferenceAudios,
       extra_params: {
         ...(payload.extraParams ?? {}),
         ...(typeof payload.seconds === 'number' ? { seconds: payload.seconds } : {}),

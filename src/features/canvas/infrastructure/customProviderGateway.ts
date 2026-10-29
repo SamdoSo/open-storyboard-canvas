@@ -4207,7 +4207,7 @@ function buildVolcengineSeedanceVideoJsonBody(
   const defaultRequestParams = resolveDefaultRequestParams(cfg);
   const userExtra = { ...(request.extra_params ?? {}) } as Record<string, unknown>;
 
-  // 时长处理：支持 -1（智能时长），正整数秒在 [2, 30] 范围内
+  // 时长处理：支持 -1（智能时长），正整数秒在 [4, 30] 范围内（Seedance 官方范围为 4~30 或 -1）
   const rawSeconds =
     userExtra.seconds
     ?? userExtra.duration
@@ -4219,7 +4219,7 @@ function buildVolcengineSeedanceVideoJsonBody(
   } else {
     const parsed = resolveVideoSeconds(request, defaultRequestParams);
     if (parsed !== undefined) {
-      duration = Math.max(2, Math.min(30, Math.round(parsed)));
+      duration = Math.max(4, Math.min(30, Math.round(parsed)));
     }
   }
 
@@ -4260,9 +4260,12 @@ function buildVolcengineSeedanceVideoJsonBody(
     userExtra.omni_reference_task_type === 'reference' ||
     userExtra.omni_reference_task_type === 'edit' ||
     userExtra.omni_reference_task_type === 'extend' ||
+    userExtra.omni_reference_task_type === 'auto' ||
     userExtra.mode === 'reference' ||
     userExtra.referenceMode === 'reference' ||
     images.length > 2;
+
+  let omniReferenceTaskType: string | undefined;
 
   if (isMultimodalOrExplicitRef) {
     images.forEach((url) => {
@@ -4286,12 +4289,39 @@ function buildVolcengineSeedanceVideoJsonBody(
         role: 'reference_audio',
       });
     });
+
+    // 智能判定或显式指定 omni_reference_task_type:
+    // 如果用户显式传入了，优先使用；若未传入且包含参考视频，可根据 prompt 动词智能识别 edit 或 extend，否则默认为 auto
+    const explicitTaskType = typeof userExtra.omni_reference_task_type === 'string'
+      ? userExtra.omni_reference_task_type.trim().toLowerCase()
+      : undefined;
+
+    const promptText = (request.prompt ?? '').trim();
+    const isEditIntent = explicitTaskType === 'edit'
+      || (videos.length > 0 && !explicitTaskType && /(编辑|修改|替换|改成|增加|加上|删除|去掉|去除|变更为)/.test(promptText));
+    const isExtendIntent = explicitTaskType === 'extend'
+      || (videos.length > 0 && !explicitTaskType && /(延长|延续|续写|向后延)/.test(promptText));
+
+    if (isEditIntent) {
+      omniReferenceTaskType = 'edit';
+      // Seedance 2.5 规则：视频编辑任务 ratio 必须为 adaptive，duration 必须为 -1
+      ratio = 'adaptive';
+      duration = -1;
+    } else if (isExtendIntent) {
+      omniReferenceTaskType = 'extend';
+      // Seedance 2.5 规则：视频续写任务 ratio 必须为 adaptive
+      ratio = 'adaptive';
+    } else {
+      omniReferenceTaskType = explicitTaskType || 'auto';
+    }
   } else if (images.length === 1) {
     content.push({
       type: 'image_url',
       image_url: { url: images[0] },
       role: 'first_frame',
     });
+    // Seedance 2.5 规则：首帧生成视频时，ratio 必须为 adaptive
+    ratio = 'adaptive';
   } else if (images.length === 2) {
     content.push({
       type: 'image_url',
@@ -4303,6 +4333,8 @@ function buildVolcengineSeedanceVideoJsonBody(
       image_url: { url: images[1] },
       role: 'last_frame',
     });
+    // Seedance 2.5 规则：首尾帧生成视频时，ratio 必须为 adaptive
+    ratio = 'adaptive';
   }
 
   if (content.length === 0 || (request.prompt && request.prompt.trim())) {
@@ -4328,15 +4360,17 @@ function buildVolcengineSeedanceVideoJsonBody(
   delete userExtra.videoInputSchema;
   delete userExtra.mode;
   delete userExtra.referenceMode;
+  delete userExtra.omni_reference_task_type;
 
   return compactRecord({
     model: modelName,
     content,
+    ...defaultRequestParams,
+    ...userExtra,
     duration,
     ratio,
     resolution,
-    ...defaultRequestParams,
-    ...userExtra,
+    ...(omniReferenceTaskType ? { omni_reference_task_type: omniReferenceTaskType } : {}),
   });
 }
 

@@ -352,12 +352,13 @@ const VIDEO_PROVIDER_TEMPLATES: VideoProviderTemplate[] = [
       videoPollIntervalMs: 5000,
       videoPollTimeoutMs: 15 * 60 * 1000,
       defaultRequestParams: {
+        omni_reference_task_type: 'auto',
         generate_audio: true,
         watermark: false,
       },
       videoInputSchema: defaultVideoInputSchemaForProviderKind('seedance-video'),
     },
-    note: 'Seedance / 火山方舟任务式视频模板：POST /api/v3/contents/generations/tasks 创建任务，GET /api/v3/contents/generations/tasks/{taskId} 查询结果。支持文生、首帧、首尾帧及全模态参考生视频（图片/视频/音频）。模型 ID、duration、ratio、resolution、generate_audio 等字段请按火山方舟控制台/文档调整；若你的账号走 AK/SK 签名或代理，请改为服务端代理后再保存。',
+    note: 'Seedance / 火山方舟任务式视频模板：POST /api/v3/contents/generations/tasks 创建任务，GET /api/v3/contents/generations/tasks/{taskId} 查询结果。已内置兼容 Seedance 2.5 任务级约束：首帧/首尾帧自动纠偏为 adaptive 比例；参考视频编辑自动适配为 adaptive 与智能时长 -1；全模态默认 auto。模型 ID、duration、ratio、resolution、generate_audio 等字段请按火山方舟控制台调整。',
   },
   {
     key: 'dashscope-wan30',
@@ -1353,7 +1354,7 @@ export const VideoProvidersSection = memo(function VideoProvidersSection() {
             <div>
               <div className="text-xs font-medium text-text-muted">视频输入能力 Schema</div>
               <div className="mt-1 text-[11px] leading-4 text-text-muted">
-                视频节点会按这里的能力显示图片、视频、音频引用，并在需要时自动把参考图上传到已启用的图床。
+                视频节点会按这里的能力显示图片、视频、音频引用，并在需要时自动把素材上传到已启用的对象存储。
               </div>
             </div>
             <button
@@ -1419,7 +1420,7 @@ export const VideoProvidersSection = memo(function VideoProvidersSection() {
                   }))}
                   className="h-3.5 w-3.5 accent-accent"
                 />
-                请求前转为图床 URL
+                请求前转为对象存储 URL
               </label>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {VIDEO_REFERENCE_ROLES.map((role) => {
@@ -1493,6 +1494,18 @@ export const VideoProvidersSection = memo(function VideoProvidersSection() {
                   />
                 </label>
               </div>
+              <label className="mt-3 flex items-center gap-2 text-[11px] text-text-muted">
+                <input
+                  type="checkbox"
+                  checked={inputSchema.video.requireImageHost}
+                  disabled={!inputSchema.video.enabled}
+                  onChange={(event) => setInputSchema((current) => updateSchemaVideo(current, {
+                    requireImageHost: event.target.checked,
+                  }))}
+                  className="h-3.5 w-3.5 accent-accent"
+                />
+                请求前转为对象存储 URL
+              </label>
               <label className="mt-3 flex flex-col gap-1 text-[11px] text-text-muted">
                 请求字段
                 <input
@@ -1550,6 +1563,18 @@ export const VideoProvidersSection = memo(function VideoProvidersSection() {
                   />
                 </label>
               </div>
+              <label className="mt-3 flex items-center gap-2 text-[11px] text-text-muted">
+                <input
+                  type="checkbox"
+                  checked={inputSchema.audio.requireImageHost}
+                  disabled={!inputSchema.audio.enabled}
+                  onChange={(event) => setInputSchema((current) => updateSchemaAudio(current, {
+                    requireImageHost: event.target.checked,
+                  }))}
+                  className="h-3.5 w-3.5 accent-accent"
+                />
+                请求前转为对象存储 URL
+              </label>
               <label className="mt-3 flex flex-col gap-1 text-[11px] text-text-muted">
                 请求字段
                 <input

@@ -258,7 +258,8 @@ function describeVideoInputSchema(schema: VideoInputSchema): string {
     parts.push(schema.images.requireImageHost ? `${imagePart} URL` : imagePart);
   }
   if (schema.video.enabled) {
-    parts.push(`视频 ${schema.video.min}-${schema.video.max}`);
+    const videoPart = `视频 ${schema.video.min}-${schema.video.max}`;
+    parts.push(schema.video.requireImageHost ? `${videoPart} URL` : videoPart);
   }
   if (schema.audio.enabled) {
     parts.push(`音频 ${schema.audio.min}-${schema.audio.max}`);
@@ -273,7 +274,8 @@ function describeCompactVideoInputSchema(schema: VideoInputSchema): string {
     parts.push(schema.images.requireImageHost ? `${imagePart}URL` : imagePart);
   }
   if (schema.video.enabled) {
-    parts.push(`视频${Math.max(0, schema.video.max)}`);
+    const videoPart = `视频${Math.max(0, schema.video.max)}`;
+    parts.push(schema.video.requireImageHost ? `${videoPart}URL` : videoPart);
   }
   if (schema.audio.enabled) {
     parts.push(`音频${Math.max(0, schema.audio.max)}`);

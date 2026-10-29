@@ -113,6 +113,7 @@ const PROVIDER_FIELDS = new Set([
 ]);
 
 export function isSensitiveSettingsKey(key: string): boolean {
+  if (key === 'secretId') return false;
   return SENSITIVE_KEY_PATTERN.test(key);
 }
 
@@ -400,21 +401,34 @@ function validateModelsCategory(category: Record<string, unknown>): void {
 }
 
 function validateImageHostingCategory(category: Record<string, unknown>): void {
-  assertKnownFields(category, new Set(['enabled', 'provider', 'pixhost', 'seedvault', 'superbed', 'cloudflareR2']), 'imageHosting');
+  assertKnownFields(category, new Set(['enabled', 'provider', 'volcengineTos', 'tencentCos', 'cloudflareR2', 'pixhost', 'seedvault', 'superbed']), 'imageHosting');
   if (typeof category.enabled !== 'boolean'
-    || !['pixhost', 'seedvault', 'superbed', 'cloudflareR2'].includes(String(category.provider))
-    || !isPlainRecord(category.pixhost)
-    || !isPlainRecord(category.seedvault)
-    || (category.superbed !== undefined && !isPlainRecord(category.superbed))
+    || typeof category.provider !== 'string'
+    || (category.volcengineTos !== undefined && !isPlainRecord(category.volcengineTos))
+    || (category.tencentCos !== undefined && !isPlainRecord(category.tencentCos))
     || (category.cloudflareR2 !== undefined && !isPlainRecord(category.cloudflareR2))) {
     throw new Error('imageHosting is invalid.');
   }
-  assertKnownFields(category.pixhost, new Set(['apiBaseUrl', 'contentType', 'maxThumbnailSize']), 'imageHosting.pixhost');
-  assertKnownFields(category.seedvault, new Set(['apiBaseUrl', 'strategyId']), 'imageHosting.seedvault');
-  if (category.superbed) {
-    assertKnownFields(category.superbed as Record<string, unknown>, new Set(['categories']), 'imageHosting.superbed');
-    if (typeof (category.superbed as Record<string, unknown>).categories !== 'string') {
-      throw new Error('imageHosting.superbed contains an invalid field.');
+  if (category.volcengineTos) {
+    assertKnownFields(category.volcengineTos as Record<string, unknown>, new Set(['accessKeyId', 'secretAccessKey', 'region', 'bucketName', 'endpoint', 'publicDomain', 'prefix']), 'imageHosting.volcengineTos');
+    const tos = category.volcengineTos as Record<string, unknown>;
+    const fields = [tos.accessKeyId, tos.region, tos.bucketName, tos.endpoint, tos.publicDomain, tos.prefix];
+    if (tos.secretAccessKey !== undefined && typeof tos.secretAccessKey !== 'string') {
+      throw new Error('imageHosting.volcengineTos contains an invalid field.');
+    }
+    if (!fields.every((item) => typeof item === 'string')) {
+      throw new Error('imageHosting.volcengineTos contains an invalid field.');
+    }
+  }
+  if (category.tencentCos) {
+    assertKnownFields(category.tencentCos as Record<string, unknown>, new Set(['secretId', 'secretKey', 'region', 'bucketName', 'endpoint', 'publicDomain', 'prefix']), 'imageHosting.tencentCos');
+    const cos = category.tencentCos as Record<string, unknown>;
+    const fields = [cos.secretId, cos.region, cos.bucketName, cos.endpoint, cos.publicDomain, cos.prefix];
+    if (cos.secretKey !== undefined && typeof cos.secretKey !== 'string') {
+      throw new Error('imageHosting.tencentCos contains an invalid field.');
+    }
+    if (!fields.every((item) => typeof item === 'string')) {
+      throw new Error('imageHosting.tencentCos contains an invalid field.');
     }
   }
   if (category.cloudflareR2) {
@@ -423,10 +437,6 @@ function validateImageHostingCategory(category: Record<string, unknown>): void {
     if (![r2.accountId, r2.accessKeyId, r2.bucketName, r2.publicDomain, r2.prefix].every((item) => typeof item === 'string')) {
       throw new Error('imageHosting.cloudflareR2 contains an invalid field.');
     }
-  }
-  if (![category.pixhost.apiBaseUrl, category.pixhost.contentType, category.pixhost.maxThumbnailSize,
-    category.seedvault.apiBaseUrl, category.seedvault.strategyId].every((item) => typeof item === 'string')) {
-    throw new Error('imageHosting contains an invalid field.');
   }
 }
 

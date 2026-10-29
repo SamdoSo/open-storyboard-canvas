@@ -3566,14 +3566,29 @@ pub async fn load_image(file_path: String) -> Result<String, String> {
 
     let base64_data = STANDARD.encode(&image_data);
 
-    let mime = if normalized_path.ends_with(".png") {
+    let lower_path = normalized_path.to_lowercase();
+    let mime = if lower_path.ends_with(".png") {
         "image/png"
-    } else if normalized_path.ends_with(".jpg") || normalized_path.ends_with(".jpeg") {
+    } else if lower_path.ends_with(".jpg") || lower_path.ends_with(".jpeg") {
         "image/jpeg"
-    } else if normalized_path.ends_with(".gif") {
+    } else if lower_path.ends_with(".gif") {
         "image/gif"
-    } else if normalized_path.ends_with(".webp") {
+    } else if lower_path.ends_with(".webp") {
         "image/webp"
+    } else if lower_path.ends_with(".mp4") {
+        "video/mp4"
+    } else if lower_path.ends_with(".mov") {
+        "video/quicktime"
+    } else if lower_path.ends_with(".webm") {
+        "video/webm"
+    } else if lower_path.ends_with(".mkv") {
+        "video/x-matroska"
+    } else if lower_path.ends_with(".avi") {
+        "video/x-msvideo"
+    } else if lower_path.ends_with(".mp3") {
+        "audio/mpeg"
+    } else if lower_path.ends_with(".wav") {
+        "audio/wav"
     } else {
         "image/png"
     };

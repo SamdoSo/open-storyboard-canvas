@@ -99,11 +99,13 @@ export interface SettingsBundlePayload {
     agnesApiKey?: string;
     customProviderApiKeys?: Record<string, string>;
     imageHost?: {
+      tosSecretAccessKey?: string;
+      cosSecretKey?: string;
+      r2SecretAccessKey?: string;
       email?: string;
       password?: string;
       token?: string;
       superbedToken?: string;
-      r2SecretAccessKey?: string;
     };
   };
 }

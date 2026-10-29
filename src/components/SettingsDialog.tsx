@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { X, FolderOpen, Plus, Trash2, CheckCircle2, ExternalLink, RotateCcw, LoaderCircle, Network } from 'lucide-react';
+import { X, FolderOpen, Plus, Trash2, CheckCircle2, ExternalLink, RotateCcw, LoaderCircle, Network, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getVersion } from '@tauri-apps/api/app';
 import { isTauri } from '@tauri-apps/api/core';
@@ -52,14 +52,20 @@ interface SettingsCheckboxCardProps {
   onCheckedChange: (checked: boolean) => void;
 }
 
-import { testImageHostUpload } from '@/features/canvas/application/imageHosting';
+import {
+  testImageHostUpload,
+  fetchVolcengineTosBuckets,
+  fetchTencentCosBuckets,
+  fetchCloudflareR2Buckets,
+  type DiscoveredBucket,
+} from '@/features/canvas/application/imageHosting';
+import { normalizeImageHostSettings } from '@/stores/settingsStore';
 
 type ImageHostSettingsPatch =
-  Partial<Omit<ImageHostSettings, 'pixhost' | 'seedvault' | 'superbed' | 'cloudflareR2'>>
+  Partial<Omit<ImageHostSettings, 'volcengineTos' | 'tencentCos' | 'cloudflareR2'>>
   & {
-    pixhost?: Partial<ImageHostSettings['pixhost']>;
-    seedvault?: Partial<ImageHostSettings['seedvault']>;
-    superbed?: Partial<ImageHostSettings['superbed']>;
+    volcengineTos?: Partial<ImageHostSettings['volcengineTos']>;
+    tencentCos?: Partial<ImageHostSettings['tencentCos']>;
     cloudflareR2?: Partial<ImageHostSettings['cloudflareR2']>;
   };
 
@@ -92,7 +98,7 @@ const CANVAS_MOUSE_ACTIONS: CanvasMouseAction[] = [
   'selectionBox',
   'nodeMenu',
 ];
-const IMAGE_HOST_PROVIDERS: ImageHostProvider[] = ['pixhost', 'seedvault', 'superbed', 'cloudflareR2'];
+const IMAGE_HOST_PROVIDERS: ImageHostProvider[] = ['volcengineTos', 'tencentCos', 'cloudflareR2'];
 
 function normalizeSettingsCategory(category: SettingsCategory): SettingsCategory {
   if (category === 'providers' || category === 'providersNew' || category === 'providersOld' || category === 'providersChat') {
@@ -114,83 +120,8 @@ function providerTabFromSettingsCategory(category: SettingsCategory): AddProvide
   return 'imageNew';
 }
 
-function cloneImageHostSettings(settings: ImageHostSettings): ImageHostSettings {
-  return {
-    enabled: settings.enabled,
-    provider: settings.provider,
-    pixhost: { ...settings.pixhost },
-    seedvault: { ...settings.seedvault },
-    superbed: { ...settings.superbed },
-    cloudflareR2: { ...settings.cloudflareR2 },
-  };
-}
-
-function joinApiPath(baseUrl: string, path: string): string {
-  return `${baseUrl.trim().replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
-}
-
-function extractSeedvaultToken(responseText: string): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(responseText);
-  } catch {
-    throw new Error('settings.imageHosting.errors.invalidTokenResponse');
-  }
-
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('settings.imageHosting.errors.invalidTokenResponse');
-  }
-
-  const data = (parsed as { data?: unknown }).data;
-  const token = data && typeof data === 'object'
-    ? (data as { token?: unknown }).token
-    : undefined;
-  if (typeof token !== 'string' || !token.trim()) {
-    throw new Error('settings.imageHosting.errors.invalidTokenResponse');
-  }
-  return token.trim();
-}
-
-function hasSeedvaultCredentialsChanged(
-  nextSettings: ImageHostSettings,
-  savedSettings: ImageHostSettings
-): boolean {
-  const nextEmail = nextSettings.seedvault.email.trim();
-  const savedEmail = savedSettings.seedvault.email.trim();
-  return (
-    nextEmail.length > 0
-    && nextSettings.seedvault.password.length > 0
-    && (
-      nextEmail !== savedEmail
-      || nextSettings.seedvault.password !== savedSettings.seedvault.password
-      || !savedSettings.seedvault.token.trim()
-    )
-  );
-}
-
-async function requestSeedvaultToken(settings: ImageHostSettings): Promise<string> {
-  const email = settings.seedvault.email.trim();
-  const password = settings.seedvault.password;
-  if (!email || !password) {
-    throw new Error('settings.imageHosting.errors.missingSeedvaultCredentials');
-  }
-
-  const response = await customHttpRequest({
-    url: joinApiPath(settings.seedvault.apiBaseUrl, '/tokens'),
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-    },
-    bodyMode: 'json',
-    body: { email, password },
-    timeoutMs: 30000,
-  });
-
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error('settings.imageHosting.errors.tokenRequestFailed');
-  }
-
-  return extractSeedvaultToken(response.text);
+function cloneImageHostSettings(settings?: unknown): ImageHostSettings {
+  return normalizeImageHostSettings(settings ?? DEFAULT_IMAGE_HOST_SETTINGS);
 }
 
 function SettingsCheckboxCard({
@@ -370,9 +301,12 @@ export function SettingsDialog({
   const [localImageHostSettings, setLocalImageHostSettings] = useState<ImageHostSettings>(
     () => cloneImageHostSettings(imageHostSettings ?? DEFAULT_IMAGE_HOST_SETTINGS)
   );
-  const [forceSeedvaultTokenRefresh, setForceSeedvaultTokenRefresh] = useState(false);
   const [testingImageHost, setTestingImageHost] = useState<ImageHostProvider | null>(null);
   const [testResult, setTestResult] = useState<{ provider: ImageHostProvider; ok: boolean; message: string } | null>(null);
+  const [isFetchingBuckets, setIsFetchingBuckets] = useState<ImageHostProvider | null>(null);
+  const [discoveredTosBuckets, setDiscoveredTosBuckets] = useState<DiscoveredBucket[]>([]);
+  const [discoveredCosBuckets, setDiscoveredCosBuckets] = useState<DiscoveredBucket[]>([]);
+  const [discoveredR2Buckets, setDiscoveredR2Buckets] = useState<DiscoveredBucket[]>([]);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsSaveError, setSettingsSaveError] = useState<string>('');
   const [checkUpdateStatus, setCheckUpdateStatus] = useState<'' | 'checking' | 'has-update' | 'up-to-date' | 'failed'>('');
@@ -445,7 +379,10 @@ export function SettingsDialog({
     setLocalAutoCheckAppUpdateOnLaunch(autoCheckAppUpdateOnLaunch);
     setLocalEnableUpdateDialog(enableUpdateDialog);
     setLocalImageHostSettings(cloneImageHostSettings(imageHostSettings ?? DEFAULT_IMAGE_HOST_SETTINGS));
-    setForceSeedvaultTokenRefresh(false);
+    setDiscoveredTosBuckets([]);
+    setDiscoveredR2Buckets([]);
+    setIsFetchingBuckets(null);
+    setTestResult(null);
     setSettingsSaveError('');
     setIsSavingSettings(false);
     setCheckUpdateStatus('');
@@ -490,34 +427,25 @@ export function SettingsDialog({
     setSettingsSaveError('');
     try {
       const nextImageHostSettings = cloneImageHostSettings(localImageHostSettings);
-      const hasSeedvaultCredentialPair = Boolean(
-        nextImageHostSettings.seedvault.email.trim()
-        && nextImageHostSettings.seedvault.password
-      );
-      const shouldRefreshSeedvaultToken =
-        nextImageHostSettings.provider === 'seedvault'
-        && hasSeedvaultCredentialPair
-        && (
-          forceSeedvaultTokenRefresh
-          || hasSeedvaultCredentialsChanged(nextImageHostSettings, imageHostSettings)
-        );
-
-      if (shouldRefreshSeedvaultToken) {
-        nextImageHostSettings.seedvault.token = await requestSeedvaultToken(nextImageHostSettings);
+      if (
+        nextImageHostSettings.enabled
+        && nextImageHostSettings.provider === 'volcengineTos'
+      ) {
+        if (!nextImageHostSettings.volcengineTos.accessKeyId.trim()
+          || !nextImageHostSettings.volcengineTos.secretAccessKey.trim()
+          || !nextImageHostSettings.volcengineTos.bucketName.trim()) {
+          throw new Error('settings.imageHosting.errors.missingVolcengineTosCredentials');
+        }
       }
       if (
         nextImageHostSettings.enabled
-        && nextImageHostSettings.provider === 'seedvault'
-        && !nextImageHostSettings.seedvault.token.trim()
+        && nextImageHostSettings.provider === 'tencentCos'
       ) {
-        throw new Error('settings.imageHosting.errors.missingSeedvaultCredentials');
-      }
-      if (
-        nextImageHostSettings.enabled
-        && nextImageHostSettings.provider === 'superbed'
-        && !nextImageHostSettings.superbed.token.trim()
-      ) {
-        throw new Error('settings.imageHosting.errors.missingSuperbedToken');
+        if (!nextImageHostSettings.tencentCos.secretId.trim()
+          || !nextImageHostSettings.tencentCos.secretKey.trim()
+          || !nextImageHostSettings.tencentCos.bucketName.trim()) {
+          throw new Error('settings.imageHosting.errors.missingTencentCosCredentials');
+        }
       }
       if (
         nextImageHostSettings.enabled
@@ -578,7 +506,6 @@ export function SettingsDialog({
       setEnableUpdateDialog(localEnableUpdateDialog);
       setImageHostSettings(nextImageHostSettings);
       setLocalImageHostSettings(nextImageHostSettings);
-      setForceSeedvaultTokenRefresh(false);
       setSettingsSaved(true);
       window.setTimeout(() => setSettingsSaved(false), 1500);
     } catch (error) {
@@ -623,7 +550,6 @@ export function SettingsDialog({
     localAutoCheckAppUpdateOnLaunch,
     localEnableUpdateDialog,
     localImageHostSettings,
-    forceSeedvaultTokenRefresh,
     imageHostSettings,
     providers,
     t,
@@ -714,26 +640,25 @@ export function SettingsDialog({
   }, []);
 
   const updateLocalImageHostSettings = useCallback((patch: ImageHostSettingsPatch) => {
-    setLocalImageHostSettings((previous) => ({
-      ...previous,
-      ...patch,
-      pixhost: {
-        ...previous.pixhost,
-        ...(patch.pixhost ?? {}),
-      },
-      seedvault: {
-        ...previous.seedvault,
-        ...(patch.seedvault ?? {}),
-      },
-      superbed: {
-        ...previous.superbed,
-        ...(patch.superbed ?? {}),
-      },
-      cloudflareR2: {
-        ...previous.cloudflareR2,
-        ...(patch.cloudflareR2 ?? {}),
-      },
-    }));
+    setLocalImageHostSettings((previous) => {
+      const normalized = normalizeImageHostSettings(previous);
+      return {
+        ...normalized,
+        ...patch,
+        volcengineTos: {
+          ...normalized.volcengineTos,
+          ...(patch.volcengineTos ?? {}),
+        },
+        tencentCos: {
+          ...normalized.tencentCos,
+          ...(patch.tencentCos ?? {}),
+        },
+        cloudflareR2: {
+          ...normalized.cloudflareR2,
+          ...(patch.cloudflareR2 ?? {}),
+        },
+      };
+    });
     setSettingsSaveError('');
     setTestResult(null);
   }, []);
@@ -770,18 +695,146 @@ export function SettingsDialog({
     [localImageHostSettings, t]
   );
 
-  const updateSeedvaultCredentials = useCallback(
-    (patch: Partial<ImageHostSettings['seedvault']>) => {
-      updateLocalImageHostSettings({
-        seedvault: patch,
+  const handleFetchTosBuckets = useCallback(async () => {
+    if (
+      !localImageHostSettings.volcengineTos.accessKeyId.trim() ||
+      !localImageHostSettings.volcengineTos.secretAccessKey.trim()
+    ) {
+      setTestResult({
+        provider: 'volcengineTos',
+        ok: false,
+        message: t('settings.imageHosting.missingFetchCredentialsTos'),
       });
-      if (Object.prototype.hasOwnProperty.call(patch, 'email')
-        || Object.prototype.hasOwnProperty.call(patch, 'password')) {
-        setForceSeedvaultTokenRefresh(true);
+      return;
+    }
+
+    setIsFetchingBuckets('volcengineTos');
+    setTestResult(null);
+    try {
+      const buckets = await fetchVolcengineTosBuckets({
+        accessKeyId: localImageHostSettings.volcengineTos.accessKeyId,
+        secretAccessKey: localImageHostSettings.volcengineTos.secretAccessKey,
+        region: localImageHostSettings.volcengineTos.region,
+        endpoint: localImageHostSettings.volcengineTos.endpoint,
+      });
+      setDiscoveredTosBuckets(buckets);
+      if (buckets.length === 0) {
+        setTestResult({
+          provider: 'volcengineTos',
+          ok: false,
+          message: t('settings.imageHosting.fetchBucketsEmpty'),
+        });
+      } else {
+        setTestResult({
+          provider: 'volcengineTos',
+          ok: true,
+          message: t('settings.imageHosting.fetchBucketsSuccess', { count: buckets.length }),
+        });
       }
-    },
-    [updateLocalImageHostSettings]
-  );
+    } catch (err) {
+      setTestResult({
+        provider: 'volcengineTos',
+        ok: false,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setIsFetchingBuckets(null);
+    }
+  }, [localImageHostSettings.volcengineTos, t]);
+
+  const handleFetchCosBuckets = useCallback(async () => {
+    if (
+      !localImageHostSettings.tencentCos.secretId.trim() ||
+      !localImageHostSettings.tencentCos.secretKey.trim()
+    ) {
+      setTestResult({
+        provider: 'tencentCos',
+        ok: false,
+        message: t('settings.imageHosting.missingFetchCredentialsCos'),
+      });
+      return;
+    }
+
+    setIsFetchingBuckets('tencentCos');
+    setTestResult(null);
+    try {
+      const buckets = await fetchTencentCosBuckets({
+        secretId: localImageHostSettings.tencentCos.secretId,
+        secretKey: localImageHostSettings.tencentCos.secretKey,
+        region: localImageHostSettings.tencentCos.region,
+        endpoint: localImageHostSettings.tencentCos.endpoint,
+      });
+      setDiscoveredCosBuckets(buckets);
+      if (buckets.length === 0) {
+        setTestResult({
+          provider: 'tencentCos',
+          ok: false,
+          message: t('settings.imageHosting.fetchBucketsEmpty'),
+        });
+      } else {
+        setTestResult({
+          provider: 'tencentCos',
+          ok: true,
+          message: t('settings.imageHosting.fetchBucketsSuccess', { count: buckets.length }),
+        });
+      }
+    } catch (err) {
+      setTestResult({
+        provider: 'tencentCos',
+        ok: false,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setIsFetchingBuckets(null);
+    }
+  }, [localImageHostSettings.tencentCos, t]);
+
+  const handleFetchR2Buckets = useCallback(async () => {
+    if (
+      !localImageHostSettings.cloudflareR2.accountId.trim() ||
+      !localImageHostSettings.cloudflareR2.accessKeyId.trim() ||
+      !localImageHostSettings.cloudflareR2.secretAccessKey.trim()
+    ) {
+      setTestResult({
+        provider: 'cloudflareR2',
+        ok: false,
+        message: t('settings.imageHosting.missingFetchCredentialsR2'),
+      });
+      return;
+    }
+
+    setIsFetchingBuckets('cloudflareR2');
+    setTestResult(null);
+    try {
+      const buckets = await fetchCloudflareR2Buckets({
+        accountId: localImageHostSettings.cloudflareR2.accountId,
+        accessKeyId: localImageHostSettings.cloudflareR2.accessKeyId,
+        secretAccessKey: localImageHostSettings.cloudflareR2.secretAccessKey,
+      });
+      setDiscoveredR2Buckets(buckets);
+      if (buckets.length === 0) {
+        setTestResult({
+          provider: 'cloudflareR2',
+          ok: false,
+          message: t('settings.imageHosting.fetchBucketsEmpty'),
+        });
+      } else {
+        setTestResult({
+          provider: 'cloudflareR2',
+          ok: true,
+          message: t('settings.imageHosting.fetchBucketsSuccess', { count: buckets.length }),
+        });
+      }
+    } catch (err) {
+      setTestResult({
+        provider: 'cloudflareR2',
+        ok: false,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setIsFetchingBuckets(null);
+    }
+  }, [localImageHostSettings.cloudflareR2, t]);
 
   const handleCanvasMousePresetChange = useCallback((preset: CanvasMouseBindingPreset) => {
     setLocalCanvasMouseBindingPreset(preset);
@@ -1173,28 +1226,44 @@ export function SettingsDialog({
                     </UiSelect>
                   </div>
 
-                  {localImageHostSettings.provider === 'pixhost' && (
+                  {localImageHostSettings.provider === 'volcengineTos' && (
                     <div className="rounded-lg border border-border-dark bg-bg-dark p-4">
                       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h3 className="text-sm font-medium text-text-dark">
-                            {t('settings.imageHosting.pixhost.title')}
+                            {t('settings.imageHosting.volcengineTos.title')}
                           </h3>
                           <p className="mt-1 text-xs text-text-muted">
-                            {t('settings.imageHosting.pixhost.desc')}
+                            {t('settings.imageHosting.volcengineTos.desc')}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
                             className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark disabled:opacity-50"
-                            disabled={testingImageHost !== null}
-                            onClick={() => void handleTestImageHost('pixhost')}
+                            disabled={isFetchingBuckets !== null || testingImageHost !== null}
+                            onClick={() => void handleFetchTosBuckets()}
+                            title="获取账号下的所有可用存储桶并供选择填充"
                           >
-                            {testingImageHost === 'pixhost' ? (
+                            {isFetchingBuckets === 'volcengineTos' ? (
+                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            )}
+                            {isFetchingBuckets === 'volcengineTos'
+                              ? t('settings.imageHosting.fetchingBuckets')
+                              : t('settings.imageHosting.fetchBuckets')}
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark disabled:opacity-50"
+                            disabled={testingImageHost !== null}
+                            onClick={() => void handleTestImageHost('volcengineTos')}
+                          >
+                            {testingImageHost === 'volcengineTos' ? (
                               <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
                             ) : null}
-                            {testingImageHost === 'pixhost'
+                            {testingImageHost === 'volcengineTos'
                               ? t('settings.imageHosting.testing')
                               : t('settings.imageHosting.testUpload')}
                           </button>
@@ -1203,7 +1272,7 @@ export function SettingsDialog({
                             className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark"
                             onClick={() =>
                               updateLocalImageHostSettings({
-                                pixhost: { ...DEFAULT_IMAGE_HOST_SETTINGS.pixhost },
+                                volcengineTos: { ...DEFAULT_IMAGE_HOST_SETTINGS.volcengineTos },
                               })
                             }
                           >
@@ -1214,187 +1283,172 @@ export function SettingsDialog({
                       </div>
 
                       <div className="grid gap-3 sm:grid-cols-2">
-                        <label className="text-xs font-medium text-text-muted sm:col-span-2">
-                          {t('settings.imageHosting.apiBaseUrl')}
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.volcengineTos.accessKeyId')}
                           <input
-                            value={localImageHostSettings.pixhost.apiBaseUrl}
+                            value={localImageHostSettings.volcengineTos.accessKeyId}
                             onChange={(event) =>
                               updateLocalImageHostSettings({
-                                pixhost: { apiBaseUrl: event.target.value },
+                                volcengineTos: { accessKeyId: event.target.value },
                               })
                             }
-                            placeholder="https://api.pixhost.to"
-                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                            placeholder={t('settings.imageHosting.volcengineTos.accessKeyIdPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
                           />
                         </label>
 
                         <label className="text-xs font-medium text-text-muted">
-                          {t('settings.imageHosting.pixhost.contentType')}
-                          <UiSelect
-                            value={localImageHostSettings.pixhost.contentType}
-                            onChange={(event) =>
-                              updateLocalImageHostSettings({
-                                pixhost: { contentType: event.target.value },
-                              })
-                            }
-                            className="mt-1"
-                            aria-label={t('settings.imageHosting.pixhost.contentType')}
-                          >
-                            <option value="0">{t('settings.imageHosting.pixhost.contentTypes.family')}</option>
-                            <option value="1">{t('settings.imageHosting.pixhost.contentTypes.adult')}</option>
-                          </UiSelect>
-                        </label>
-
-                        <label className="text-xs font-medium text-text-muted">
-                          {t('settings.imageHosting.pixhost.maxThumbnailSize')}
-                          <input
-                            type="number"
-                            min={100}
-                            max={500}
-                            step={10}
-                            value={localImageHostSettings.pixhost.maxThumbnailSize}
-                            onChange={(event) =>
-                              updateLocalImageHostSettings({
-                                pixhost: { maxThumbnailSize: event.target.value },
-                              })
-                            }
-                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
-                          />
-                        </label>
-                      </div>
-
-                      {testResult && testResult.provider === 'pixhost' && (
-                        <div
-                          role="status"
-                          className={`mt-3 rounded border p-2.5 text-xs break-all ${
-                            testResult.ok
-                              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
-                              : 'border-red-500/40 bg-red-500/10 text-red-200'
-                          }`}
-                        >
-                          {testResult.message}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {localImageHostSettings.provider === 'seedvault' && (
-                    <div className="rounded-lg border border-border-dark bg-bg-dark p-4">
-                      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <h3 className="text-sm font-medium text-text-dark">
-                            {t('settings.imageHosting.seedvault.title')}
-                          </h3>
-                          <p className="mt-1 text-xs text-text-muted">
-                            {t('settings.imageHosting.seedvault.desc')}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark disabled:opacity-50"
-                            disabled={testingImageHost !== null}
-                            onClick={() => void handleTestImageHost('seedvault')}
-                          >
-                            {testingImageHost === 'seedvault' ? (
-                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                            ) : null}
-                            {testingImageHost === 'seedvault'
-                              ? t('settings.imageHosting.testing')
-                              : t('settings.imageHosting.testUpload')}
-                          </button>
-                          <button
-                            type="button"
-                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark"
-                            onClick={() =>
-                              updateLocalImageHostSettings({
-                                seedvault: { ...DEFAULT_IMAGE_HOST_SETTINGS.seedvault },
-                              })
-                            }
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" />
-                            {t('settings.imageHosting.restoreDefaults')}
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <label className="text-xs font-medium text-text-muted sm:col-span-2">
-                          {t('settings.imageHosting.apiBaseUrl')}
-                          <input
-                            value={localImageHostSettings.seedvault.apiBaseUrl}
-                            onChange={(event) =>
-                              updateLocalImageHostSettings({
-                                seedvault: { apiBaseUrl: event.target.value },
-                              })
-                            }
-                            placeholder="https://img.seedvault.cn/api/v1"
-                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
-                          />
-                        </label>
-
-                        <label className="text-xs font-medium text-text-muted">
-                          {t('settings.imageHosting.seedvault.email')}
-                          <input
-                            type="email"
-                            value={localImageHostSettings.seedvault.email}
-                            onChange={(event) =>
-                              updateSeedvaultCredentials({ email: event.target.value })
-                            }
-                            autoComplete="username"
-                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
-                          />
-                        </label>
-
-                        <label className="text-xs font-medium text-text-muted">
-                          {t('settings.imageHosting.seedvault.password')}
+                          {t('settings.imageHosting.volcengineTos.secretAccessKey')}
                           <input
                             type="password"
-                            value={localImageHostSettings.seedvault.password}
+                            value={localImageHostSettings.volcengineTos.secretAccessKey}
                             onChange={(event) =>
-                              updateSeedvaultCredentials({ password: event.target.value })
+                              updateLocalImageHostSettings({
+                                volcengineTos: { secretAccessKey: event.target.value },
+                              })
                             }
-                            autoComplete="current-password"
-                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                            placeholder={t('settings.imageHosting.volcengineTos.secretAccessKeyPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
                           />
                         </label>
 
                         <label className="text-xs font-medium text-text-muted">
-                          {t('settings.imageHosting.seedvault.strategyId')}
+                          {t('settings.imageHosting.volcengineTos.region')}
                           <input
-                            value={localImageHostSettings.seedvault.strategyId}
+                            value={localImageHostSettings.volcengineTos.region}
                             onChange={(event) =>
                               updateLocalImageHostSettings({
-                                seedvault: { strategyId: event.target.value },
+                                volcengineTos: { region: event.target.value },
                               })
                             }
-                            placeholder={t('settings.imageHosting.seedvault.strategyIdPlaceholder')}
-                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                            placeholder={t('settings.imageHosting.volcengineTos.regionPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
+                          />
+                        </label>
+
+                        <div className="flex flex-col justify-end">
+                          <div className="flex items-center justify-between pb-1">
+                            <span className="text-xs font-medium text-text-muted">
+                              {t('settings.imageHosting.volcengineTos.bucketName')}
+                            </span>
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline disabled:opacity-50"
+                              disabled={isFetchingBuckets !== null || testingImageHost !== null}
+                              onClick={() => void handleFetchTosBuckets()}
+                            >
+                              {isFetchingBuckets === 'volcengineTos' ? (
+                                <LoaderCircle className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-3 w-3" />
+                              )}
+                              {t('settings.imageHosting.fetchBuckets')}
+                            </button>
+                          </div>
+
+                          {discoveredTosBuckets.length > 0 && (
+                            <div className="mb-1.5 rounded border border-accent/40 bg-accent/10 p-2">
+                              <div className="mb-1 text-[11px] font-medium text-accent">
+                                {t('settings.imageHosting.selectBucketPrompt', { count: discoveredTosBuckets.length })}
+                              </div>
+                              <UiSelect
+                                value={localImageHostSettings.volcengineTos.bucketName}
+                                onChange={(event) => {
+                                  const chosenName = event.target.value;
+                                  const chosen = discoveredTosBuckets.find((b) => b.name === chosenName);
+                                  if (chosen) {
+                                    const nextRegion = chosen.region || localImageHostSettings.volcengineTos.region.trim() || 'cn-beijing';
+                                    updateLocalImageHostSettings({
+                                      volcengineTos: {
+                                        bucketName: chosen.name,
+                                        region: nextRegion,
+                                        ...(!localImageHostSettings.volcengineTos.endpoint.trim() || localImageHostSettings.volcengineTos.endpoint.includes('tos-s3-')
+                                          ? { endpoint: `tos-s3-${nextRegion}.volces.com` }
+                                          : {}),
+                                      },
+                                    });
+                                    setTestResult({
+                                      provider: 'volcengineTos',
+                                      ok: true,
+                                      message: t('settings.imageHosting.autoFilledBucket', {
+                                        name: chosen.name,
+                                        region: nextRegion,
+                                      }),
+                                    });
+                                  }
+                                }}
+                                className="h-8 w-full text-xs"
+                              >
+                                <option value="">{t('settings.imageHosting.selectBucketPlaceholder')}</option>
+                                {discoveredTosBuckets.map((bucket) => (
+                                  <option key={bucket.name} value={bucket.name}>
+                                    {bucket.name}{bucket.region ? ` (${bucket.region})` : ''}
+                                  </option>
+                                ))}
+                              </UiSelect>
+                            </div>
+                          )}
+
+                          <input
+                            value={localImageHostSettings.volcengineTos.bucketName}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                volcengineTos: { bucketName: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.volcengineTos.bucketNamePlaceholder')}
+                            className="h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
+                          />
+                        </div>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.volcengineTos.endpoint')}
+                          <input
+                            value={localImageHostSettings.volcengineTos.endpoint}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                volcengineTos: { endpoint: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.volcengineTos.endpointPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
                           />
                         </label>
 
                         <label className="text-xs font-medium text-text-muted">
-                          {t('settings.imageHosting.seedvault.token')}
+                          {t('settings.imageHosting.volcengineTos.publicDomain')}
                           <input
-                            value={localImageHostSettings.seedvault.token}
+                            value={localImageHostSettings.volcengineTos.publicDomain}
                             onChange={(event) =>
                               updateLocalImageHostSettings({
-                                seedvault: { token: event.target.value },
+                                volcengineTos: { publicDomain: event.target.value },
                               })
                             }
-                            placeholder={t('settings.imageHosting.seedvault.tokenPlaceholder')}
+                            placeholder={t('settings.imageHosting.volcengineTos.publicDomainPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted sm:col-span-2">
+                          {t('settings.imageHosting.volcengineTos.prefix')}
+                          <input
+                            value={localImageHostSettings.volcengineTos.prefix}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                volcengineTos: { prefix: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.volcengineTos.prefixPlaceholder')}
                             className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
                           />
                         </label>
                       </div>
 
                       <p className="mt-3 text-xs leading-5 text-text-muted">
-                        {forceSeedvaultTokenRefresh
-                          ? t('settings.imageHosting.seedvault.tokenWillRefresh')
-                          : t('settings.imageHosting.seedvault.tokenHint')}
+                        {t('settings.imageHosting.volcengineTos.dashboardHint')}
                       </p>
 
-                      {testResult && testResult.provider === 'seedvault' && (
+                      {testResult && testResult.provider === 'volcengineTos' && (
                         <div
                           role="status"
                           className={`mt-3 rounded border p-2.5 text-xs break-all ${
@@ -1409,28 +1463,44 @@ export function SettingsDialog({
                     </div>
                   )}
 
-                  {localImageHostSettings.provider === 'superbed' && (
+                  {localImageHostSettings.provider === 'tencentCos' && (
                     <div className="rounded-lg border border-border-dark bg-bg-dark p-4">
                       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h3 className="text-sm font-medium text-text-dark">
-                            {t('settings.imageHosting.superbed.title')}
+                            {t('settings.imageHosting.tencentCos.title')}
                           </h3>
                           <p className="mt-1 text-xs text-text-muted">
-                            {t('settings.imageHosting.superbed.desc')}
+                            {t('settings.imageHosting.tencentCos.desc')}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
                             className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark disabled:opacity-50"
-                            disabled={testingImageHost !== null}
-                            onClick={() => void handleTestImageHost('superbed')}
+                            disabled={isFetchingBuckets !== null || testingImageHost !== null}
+                            onClick={() => void handleFetchCosBuckets()}
+                            title="获取账号下的所有可用存储桶并供选择填充"
                           >
-                            {testingImageHost === 'superbed' ? (
+                            {isFetchingBuckets === 'tencentCos' ? (
+                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            )}
+                            {isFetchingBuckets === 'tencentCos'
+                              ? t('settings.imageHosting.fetchingBuckets')
+                              : t('settings.imageHosting.fetchBuckets')}
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark disabled:opacity-50"
+                            disabled={testingImageHost !== null}
+                            onClick={() => void handleTestImageHost('tencentCos')}
+                          >
+                            {testingImageHost === 'tencentCos' ? (
                               <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
                             ) : null}
-                            {testingImageHost === 'superbed'
+                            {testingImageHost === 'tencentCos'
                               ? t('settings.imageHosting.testing')
                               : t('settings.imageHosting.testUpload')}
                           </button>
@@ -1439,7 +1509,7 @@ export function SettingsDialog({
                             className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark"
                             onClick={() =>
                               updateLocalImageHostSettings({
-                                superbed: { ...DEFAULT_IMAGE_HOST_SETTINGS.superbed },
+                                tencentCos: { ...DEFAULT_IMAGE_HOST_SETTINGS.tencentCos },
                               })
                             }
                           >
@@ -1450,49 +1520,169 @@ export function SettingsDialog({
                       </div>
 
                       <div className="grid gap-3 sm:grid-cols-2">
-                        <label className="text-xs font-medium text-text-muted sm:col-span-2">
-                          {t('settings.imageHosting.superbed.token')}
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.tencentCos.secretId')}
                           <input
-                            type="password"
-                            value={localImageHostSettings.superbed.token}
+                            value={localImageHostSettings.tencentCos.secretId}
                             onChange={(event) =>
                               updateLocalImageHostSettings({
-                                superbed: { token: event.target.value },
+                                tencentCos: { secretId: event.target.value },
                               })
                             }
-                            placeholder={t('settings.imageHosting.superbed.tokenPlaceholder')}
+                            placeholder={t('settings.imageHosting.tencentCos.secretIdPlaceholder')}
                             className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
                           />
                         </label>
 
-                        <label className="text-xs font-medium text-text-muted sm:col-span-2">
-                          {t('settings.imageHosting.superbed.categories')}
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.tencentCos.secretKey')}
                           <input
-                            value={localImageHostSettings.superbed.categories}
+                            type="password"
+                            value={localImageHostSettings.tencentCos.secretKey}
                             onChange={(event) =>
                               updateLocalImageHostSettings({
-                                superbed: { categories: event.target.value },
+                                tencentCos: { secretKey: event.target.value },
                               })
                             }
-                            placeholder={t('settings.imageHosting.superbed.categoriesPlaceholder')}
+                            placeholder={t('settings.imageHosting.tencentCos.secretKeyPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.tencentCos.region')}
+                          <input
+                            value={localImageHostSettings.tencentCos.region}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                tencentCos: { region: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.tencentCos.regionPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
+                          />
+                        </label>
+
+                        <div className="flex flex-col justify-end">
+                          <div className="flex items-center justify-between pb-1">
+                            <span className="text-xs font-medium text-text-muted">
+                              {t('settings.imageHosting.tencentCos.bucketName')}
+                            </span>
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline disabled:opacity-50"
+                              disabled={isFetchingBuckets !== null || testingImageHost !== null}
+                              onClick={() => void handleFetchCosBuckets()}
+                            >
+                              {isFetchingBuckets === 'tencentCos' ? (
+                                <LoaderCircle className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-3 w-3" />
+                              )}
+                              {t('settings.imageHosting.fetchBuckets')}
+                            </button>
+                          </div>
+
+                          {discoveredCosBuckets.length > 0 && (
+                            <div className="mb-1.5 rounded border border-accent/40 bg-accent/10 p-2">
+                              <div className="mb-1 text-[11px] font-medium text-accent">
+                                {t('settings.imageHosting.selectBucketPrompt', { count: discoveredCosBuckets.length })}
+                              </div>
+                              <UiSelect
+                                value={localImageHostSettings.tencentCos.bucketName}
+                                onChange={(event) => {
+                                  const chosenName = event.target.value;
+                                  const chosen = discoveredCosBuckets.find((b) => b.name === chosenName);
+                                  if (chosen) {
+                                    const nextRegion = chosen.region?.trim() || localImageHostSettings.tencentCos.region;
+                                    updateLocalImageHostSettings({
+                                      tencentCos: {
+                                        bucketName: chosen.name,
+                                        region: nextRegion,
+                                      },
+                                    });
+                                    setTestResult({
+                                      provider: 'tencentCos',
+                                      ok: true,
+                                      message: t('settings.imageHosting.autoFilledBucket', {
+                                        name: chosen.name,
+                                        region: nextRegion,
+                                      }),
+                                    });
+                                  }
+                                }}
+                                className="h-8 w-full text-xs"
+                              >
+                                <option value="">{t('settings.imageHosting.selectBucketPlaceholder')}</option>
+                                {discoveredCosBuckets.map((bucket) => (
+                                  <option key={bucket.name} value={bucket.name}>
+                                    {bucket.name}{bucket.region ? ` (${bucket.region})` : ''}
+                                  </option>
+                                ))}
+                              </UiSelect>
+                            </div>
+                          )}
+
+                          <input
+                            value={localImageHostSettings.tencentCos.bucketName}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                tencentCos: { bucketName: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.tencentCos.bucketNamePlaceholder')}
+                            className="h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
+                          />
+                        </div>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.tencentCos.endpoint')}
+                          <input
+                            value={localImageHostSettings.tencentCos.endpoint}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                tencentCos: { endpoint: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.tencentCos.endpointPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted">
+                          {t('settings.imageHosting.tencentCos.publicDomain')}
+                          <input
+                            value={localImageHostSettings.tencentCos.publicDomain}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                tencentCos: { publicDomain: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.tencentCos.publicDomainPlaceholder')}
+                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
+                          />
+                        </label>
+
+                        <label className="text-xs font-medium text-text-muted sm:col-span-2">
+                          {t('settings.imageHosting.tencentCos.prefix')}
+                          <input
+                            value={localImageHostSettings.tencentCos.prefix}
+                            onChange={(event) =>
+                              updateLocalImageHostSettings({
+                                tencentCos: { prefix: event.target.value },
+                              })
+                            }
+                            placeholder={t('settings.imageHosting.tencentCos.prefixPlaceholder')}
                             className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted"
                           />
                         </label>
                       </div>
 
-                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-text-muted">
-                        <span>{t('settings.imageHosting.superbed.tokenHint')}</span>
-                        <button
-                          type="button"
-                          onClick={() => void openUrl('https://www.superbed.cn/timeline')}
-                          className="inline-flex items-center gap-1 text-accent hover:underline"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                          {t('settings.imageHosting.superbed.getTokenLink')}
-                        </button>
-                      </div>
+                      <p className="mt-3 text-xs leading-5 text-text-muted">
+                        {t('settings.imageHosting.tencentCos.dashboardHint')}
+                      </p>
 
-                      {testResult && testResult.provider === 'superbed' && (
+                      {testResult && testResult.provider === 'tencentCos' && (
                         <div
                           role="status"
                           className={`mt-3 rounded border p-2.5 text-xs break-all ${
@@ -1519,6 +1709,22 @@ export function SettingsDialog({
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark disabled:opacity-50"
+                            disabled={isFetchingBuckets !== null || testingImageHost !== null}
+                            onClick={() => void handleFetchR2Buckets()}
+                            title="获取账号下的所有可用存储桶并供选择填充"
+                          >
+                            {isFetchingBuckets === 'cloudflareR2' ? (
+                              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            )}
+                            {isFetchingBuckets === 'cloudflareR2'
+                              ? t('settings.imageHosting.fetchingBuckets')
+                              : t('settings.imageHosting.fetchBuckets')}
+                          </button>
                           <button
                             type="button"
                             className="inline-flex h-8 items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-2.5 text-xs text-text-dark transition-colors hover:bg-bg-dark disabled:opacity-50"
@@ -1562,8 +1768,59 @@ export function SettingsDialog({
                           />
                         </label>
 
-                        <label className="text-xs font-medium text-text-muted">
-                          {t('settings.imageHosting.cloudflareR2.bucketName')}
+                        <div className="flex flex-col justify-end">
+                          <div className="flex items-center justify-between pb-1">
+                            <span className="text-xs font-medium text-text-muted">
+                              {t('settings.imageHosting.cloudflareR2.bucketName')}
+                            </span>
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline disabled:opacity-50"
+                              disabled={isFetchingBuckets !== null || testingImageHost !== null}
+                              onClick={() => void handleFetchR2Buckets()}
+                            >
+                              {isFetchingBuckets === 'cloudflareR2' ? (
+                                <LoaderCircle className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-3 w-3" />
+                              )}
+                              {t('settings.imageHosting.fetchBuckets')}
+                            </button>
+                          </div>
+
+                          {discoveredR2Buckets.length > 0 && (
+                            <div className="mb-1.5 rounded border border-accent/40 bg-accent/10 p-2">
+                              <div className="mb-1 text-[11px] font-medium text-accent">
+                                {t('settings.imageHosting.selectBucketPrompt', { count: discoveredR2Buckets.length })}
+                              </div>
+                              <UiSelect
+                                value={localImageHostSettings.cloudflareR2.bucketName}
+                                onChange={(event) => {
+                                  const chosenName = event.target.value;
+                                  const chosen = discoveredR2Buckets.find((b) => b.name === chosenName);
+                                  if (chosen) {
+                                    updateLocalImageHostSettings({
+                                      cloudflareR2: { bucketName: chosen.name },
+                                    });
+                                    setTestResult({
+                                      provider: 'cloudflareR2',
+                                      ok: true,
+                                      message: t('settings.imageHosting.autoFilledBucketR2', { name: chosen.name }),
+                                    });
+                                  }
+                                }}
+                                className="h-8 w-full text-xs"
+                              >
+                                <option value="">{t('settings.imageHosting.selectBucketPlaceholder')}</option>
+                                {discoveredR2Buckets.map((bucket) => (
+                                  <option key={bucket.name} value={bucket.name}>
+                                    {bucket.name}
+                                  </option>
+                                ))}
+                              </UiSelect>
+                            </div>
+                          )}
+
                           <input
                             value={localImageHostSettings.cloudflareR2.bucketName}
                             onChange={(event) =>
@@ -1572,9 +1829,9 @@ export function SettingsDialog({
                               })
                             }
                             placeholder={t('settings.imageHosting.cloudflareR2.bucketNamePlaceholder')}
-                            className="mt-1 h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
+                            className="h-9 w-full rounded border border-border-dark bg-surface-dark px-3 text-sm text-text-dark outline-none placeholder:text-text-muted font-mono"
                           />
-                        </label>
+                        </div>
 
                         <label className="text-xs font-medium text-text-muted">
                           {t('settings.imageHosting.cloudflareR2.accessKeyId')}

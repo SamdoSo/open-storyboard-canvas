@@ -13,6 +13,7 @@ export interface VideoMediaInputSchema {
   min: number;
   max: number;
   field: string;
+  requireImageHost?: boolean;
 }
 
 export interface VideoInputSchema {
@@ -47,12 +48,14 @@ export const DEFAULT_VIDEO_INPUT_SCHEMA: VideoInputSchema = {
     min: 0,
     max: 0,
     field: '',
+    requireImageHost: false,
   },
   audio: {
     enabled: false,
     min: 0,
     max: 0,
     field: '',
+    requireImageHost: false,
   },
 };
 
@@ -129,6 +132,9 @@ function normalizeMediaSchema(value: unknown, fallback: VideoMediaInputSchema): 
     min: enabled ? min : 0,
     max: enabled ? max : 0,
     field: normalizeMediaField(raw?.field, fallback.field),
+    requireImageHost: raw?.requireImageHost === undefined
+      ? (fallback.requireImageHost ?? false)
+      : raw.requireImageHost === true,
   };
 }
 
@@ -187,6 +193,7 @@ export function defaultVideoInputSchemaForProviderKind(providerKind: unknown): V
         min: 0,
         max: 10,
         field: 'reference_videos',
+        requireImageHost: true,
       },
       audio: {
         enabled: true,
@@ -210,6 +217,7 @@ export function defaultVideoInputSchemaForProviderKind(providerKind: unknown): V
         min: 0,
         max: 3,
         field: 'values.videos',
+        requireImageHost: true,
       },
       audio: {
         enabled: true,
@@ -301,6 +309,7 @@ export function defaultVideoInputSchemaForProviderKind(providerKind: unknown): V
         min: 0,
         max: 5,
         field: 'reference_videos',
+        requireImageHost: true,
       },
       audio: {
         enabled: true,

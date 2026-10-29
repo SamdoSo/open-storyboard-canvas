@@ -38,7 +38,7 @@ export type CanvasMouseBindingSlot =
   | 'middleClick'
   | 'middleDrag';
 export type CanvasMouseBindings = Record<CanvasMouseBindingSlot, CanvasMouseAction>;
-export type ImageHostProvider = 'pixhost' | 'seedvault' | 'superbed' | 'cloudflareR2';
+export type ImageHostProvider = 'volcengineTos' | 'tencentCos' | 'cloudflareR2';
 export type AudioOutputMode = 'server' | 'segmented';
 export type AudioProviderKind = 'local-doubao-tts' | 'gradio-voxcpm';
 export type ProviderApiKeys = Record<string, string>;
@@ -92,21 +92,23 @@ export interface PromptPreset {
 export interface ImageHostSettings {
   enabled: boolean;
   provider: ImageHostProvider;
-  pixhost: {
-    apiBaseUrl: string;
-    contentType: string;
-    maxThumbnailSize: string;
+  volcengineTos: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    region: string;
+    bucketName: string;
+    endpoint: string;
+    publicDomain: string;
+    prefix: string;
   };
-  seedvault: {
-    apiBaseUrl: string;
-    email: string;
-    password: string;
-    token: string;
-    strategyId: string;
-  };
-  superbed: {
-    token: string;
-    categories: string;
+  tencentCos: {
+    secretId: string;
+    secretKey: string;
+    region: string;
+    bucketName: string;
+    endpoint: string;
+    publicDomain: string;
+    prefix: string;
   };
   cloudflareR2: {
     accountId: string;
@@ -157,22 +159,24 @@ export interface AudioGenerationSettings {
 
 export const DEFAULT_IMAGE_HOST_SETTINGS: ImageHostSettings = {
   enabled: false,
-  provider: 'pixhost',
-  pixhost: {
-    apiBaseUrl: 'https://api.pixhost.to',
-    contentType: '0',
-    maxThumbnailSize: '420',
+  provider: 'volcengineTos',
+  volcengineTos: {
+    accessKeyId: '',
+    secretAccessKey: '',
+    region: 'cn-beijing',
+    bucketName: '',
+    endpoint: '',
+    publicDomain: '',
+    prefix: 'storyboard',
   },
-  seedvault: {
-    apiBaseUrl: 'https://img.seedvault.cn/api/v1',
-    email: '',
-    password: '',
-    token: '',
-    strategyId: '',
-  },
-  superbed: {
-    token: '',
-    categories: '',
+  tencentCos: {
+    secretId: '',
+    secretKey: '',
+    region: 'ap-guangzhou',
+    bucketName: '',
+    endpoint: '',
+    publicDomain: '',
+    prefix: 'storyboard',
   },
   cloudflareR2: {
     accountId: '',
@@ -402,9 +406,9 @@ function normalizeUrlSetting(input: unknown, fallback: string): string {
 }
 
 function normalizeImageHostProvider(input: unknown): ImageHostProvider {
-  return input === 'seedvault' || input === 'superbed' || input === 'cloudflareR2' || input === 'pixhost'
-    ? input
-    : 'pixhost';
+  if (input === 'tencentCos') return 'tencentCos';
+  if (input === 'cloudflareR2') return 'cloudflareR2';
+  return 'volcengineTos';
 }
 
 function normalizeAudioOutputMode(input: unknown, fallback: AudioOutputMode): AudioOutputMode {
@@ -662,48 +666,41 @@ export function normalizeImageHostSettings(input: unknown): ImageHostSettings {
   const raw = input && typeof input === 'object'
     ? input as Partial<ImageHostSettings>
     : {};
-  const rawPixhost = raw.pixhost && typeof raw.pixhost === 'object'
-    ? raw.pixhost as Partial<ImageHostSettings['pixhost']>
+  const rawRecord = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
+  const rawVolcengineTos = rawRecord.volcengineTos && typeof rawRecord.volcengineTos === 'object'
+    ? (rawRecord.volcengineTos as Partial<ImageHostSettings['volcengineTos']>)
     : {};
-  const rawSeedvault = raw.seedvault && typeof raw.seedvault === 'object'
-    ? raw.seedvault as Partial<ImageHostSettings['seedvault']>
+  const rawTencentCos = rawRecord.tencentCos && typeof rawRecord.tencentCos === 'object'
+    ? (rawRecord.tencentCos as Partial<ImageHostSettings['tencentCos']>)
     : {};
-  const rawSuperbed = raw.superbed && typeof raw.superbed === 'object'
-    ? raw.superbed as Partial<ImageHostSettings['superbed']>
-    : {};
-  const rawCloudflareR2 = raw.cloudflareR2 && typeof raw.cloudflareR2 === 'object'
-    ? raw.cloudflareR2 as Partial<ImageHostSettings['cloudflareR2']>
+  const rawCloudflareR2 = rawRecord.cloudflareR2 && typeof rawRecord.cloudflareR2 === 'object'
+    ? (rawRecord.cloudflareR2 as Partial<ImageHostSettings['cloudflareR2']>)
     : {};
 
   return {
     enabled: raw.enabled === true,
     provider: normalizeImageHostProvider(raw.provider),
-    pixhost: {
-      apiBaseUrl: normalizeUrlSetting(
-        rawPixhost.apiBaseUrl,
-        DEFAULT_IMAGE_HOST_SETTINGS.pixhost.apiBaseUrl
-      ),
-      contentType: typeof rawPixhost.contentType === 'string' && rawPixhost.contentType.trim()
-        ? rawPixhost.contentType.trim()
-        : DEFAULT_IMAGE_HOST_SETTINGS.pixhost.contentType,
-      maxThumbnailSize:
-        typeof rawPixhost.maxThumbnailSize === 'string' && rawPixhost.maxThumbnailSize.trim()
-          ? rawPixhost.maxThumbnailSize.trim()
-          : DEFAULT_IMAGE_HOST_SETTINGS.pixhost.maxThumbnailSize,
+    volcengineTos: {
+      accessKeyId: typeof rawVolcengineTos.accessKeyId === 'string' ? rawVolcengineTos.accessKeyId.trim() : '',
+      secretAccessKey: typeof rawVolcengineTos.secretAccessKey === 'string' ? rawVolcengineTos.secretAccessKey.trim() : '',
+      region: typeof rawVolcengineTos.region === 'string' && rawVolcengineTos.region.trim()
+        ? rawVolcengineTos.region.trim()
+        : DEFAULT_IMAGE_HOST_SETTINGS.volcengineTos.region,
+      bucketName: typeof rawVolcengineTos.bucketName === 'string' ? rawVolcengineTos.bucketName.trim() : '',
+      endpoint: typeof rawVolcengineTos.endpoint === 'string' ? rawVolcengineTos.endpoint.trim() : '',
+      publicDomain: typeof rawVolcengineTos.publicDomain === 'string' ? rawVolcengineTos.publicDomain.trim() : '',
+      prefix: typeof rawVolcengineTos.prefix === 'string' ? rawVolcengineTos.prefix.trim() : DEFAULT_IMAGE_HOST_SETTINGS.volcengineTos.prefix,
     },
-    seedvault: {
-      apiBaseUrl: normalizeUrlSetting(
-        rawSeedvault.apiBaseUrl,
-        DEFAULT_IMAGE_HOST_SETTINGS.seedvault.apiBaseUrl
-      ),
-      email: typeof rawSeedvault.email === 'string' ? rawSeedvault.email.trim() : '',
-      password: typeof rawSeedvault.password === 'string' ? rawSeedvault.password : '',
-      token: typeof rawSeedvault.token === 'string' ? rawSeedvault.token.trim() : '',
-      strategyId: typeof rawSeedvault.strategyId === 'string' ? rawSeedvault.strategyId.trim() : '',
-    },
-    superbed: {
-      token: typeof rawSuperbed.token === 'string' ? rawSuperbed.token.trim() : '',
-      categories: typeof rawSuperbed.categories === 'string' ? rawSuperbed.categories.trim() : '',
+    tencentCos: {
+      secretId: typeof rawTencentCos.secretId === 'string' ? rawTencentCos.secretId.trim() : '',
+      secretKey: typeof rawTencentCos.secretKey === 'string' ? rawTencentCos.secretKey.trim() : '',
+      region: typeof rawTencentCos.region === 'string' && rawTencentCos.region.trim()
+        ? rawTencentCos.region.trim()
+        : DEFAULT_IMAGE_HOST_SETTINGS.tencentCos.region,
+      bucketName: typeof rawTencentCos.bucketName === 'string' ? rawTencentCos.bucketName.trim() : '',
+      endpoint: typeof rawTencentCos.endpoint === 'string' ? rawTencentCos.endpoint.trim() : '',
+      publicDomain: typeof rawTencentCos.publicDomain === 'string' ? rawTencentCos.publicDomain.trim() : '',
+      prefix: typeof rawTencentCos.prefix === 'string' ? rawTencentCos.prefix.trim() : DEFAULT_IMAGE_HOST_SETTINGS.tencentCos.prefix,
     },
     cloudflareR2: {
       accountId: typeof rawCloudflareR2.accountId === 'string' ? rawCloudflareR2.accountId.trim() : '',
@@ -1384,7 +1381,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'settings-storage',
-      version: 21,
+      version: 23,
       onRehydrateStorage: () => {
         return (_state, error) => {
           if (error) {
