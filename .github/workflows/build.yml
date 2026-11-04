@@ -5,6 +5,8 @@ permissions:
 
 on:
   push:
+    branches:
+      - release
     tags:
       - 'v*'
   workflow_dispatch:
@@ -18,10 +20,18 @@ on:
         required: false
         type: string
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/release' }}
+
 jobs:
   build-windows:
     runs-on: windows-latest
     steps:
+      - name: Force LF checkout policy
+        shell: bash
+        run: git config --global core.autocrlf false
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -229,7 +239,7 @@ jobs:
           if-no-files-found: warn
 
   release:
-    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
+    if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
     needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     permissions:
@@ -247,8 +257,13 @@ jobs:
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
-          else
+          elif [[ -n "${{ github.event.inputs.release_tag }}" ]]; then
             TAG="${{ github.event.inputs.release_tag }}"
+          elif [[ "$GITHUB_REF" == "refs/heads/release" ]]; then
+            PKG_VERSION="$(node -p "require('./package.json').version")"
+            TAG="v${PKG_VERSION#v}"
+          else
+            TAG=""
           fi
           if [[ -z "$TAG" || "$TAG" != v* ]]; then
             echo "Invalid release tag: $TAG"
@@ -271,6 +286,10 @@ jobs:
 
           if [[ -z "$BODY" ]]; then
             BODY="$(git for-each-ref "refs/tags/$TAG" --format='%(contents)' | sed '/^[[:space:]]*$/d')"
+          fi
+
+          if [[ -z "$BODY" ]]; then
+            BODY="$(git log -1 --pretty=%B | sed '/^[[:space:]]*$/d')"
           fi
 
           if [[ -z "$BODY" ]]; then

@@ -549,7 +549,8 @@ export async function uploadToTencentCos(
     } catch {
       // ignore
     }
-    throw new Error(`腾讯云 COS 上传失败：HTTP ${response.status}${detail ? ` (${detail})` : ''}`);
+    const parsed = parseXmlErrorMessage(response.text);
+    throw new Error(`腾讯云 COS 上传失败：HTTP ${response.status}${parsed ? ` (${parsed})` : detail ? ` (${detail})` : ''} [host=${host}]`);
   }
 
   if (publicDomain.trim()) {
