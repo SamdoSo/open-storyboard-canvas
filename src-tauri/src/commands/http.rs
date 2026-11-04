@@ -743,6 +743,7 @@ mod tests {
                 "tools": [{"type": "function"}],
                 "stream": true
             })),
+            raw_body: None,
             multipart: None,
             timeout_ms: Some(30_000),
             network_route: Some("system".to_string()),
